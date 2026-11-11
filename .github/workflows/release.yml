@@ -1,0 +1,75 @@
+name: release
+
+# Cutting a release is: add a section for the version to CHANGELOG.md, bump "version" in
+# package.json (and Cargo.toml's workspace version), commit, then
+#   git tag v0.2.0 && git push origin v0.2.0
+# Everything below is automatic. Installed copies see the new release on their next start.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CORAI_UPDATE_CHECK: "0"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # The tag, package.json and Cargo.toml must agree: the update check compares the release
+      # tag with the version an install reports, so a mismatch would offer the same update forever.
+      - name: Check the version
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$cargo" ]; then
+            echo "::error::tag v$tag, package.json $pkg and Cargo.toml $cargo must match"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+      - run: npm ci
+      - name: Test
+        run: npm test
+
+      - name: Release notes
+        run: |
+          # The CHANGELOG section for this version, plus the Coriolis data it was built from.
+          awk -v v="## v${{ steps.version.outputs.version }}" '
+            index($0, v) == 1 { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no section for v${{ steps.version.outputs.version }}"
+            exit 1
+          fi
+          {
+            echo
+            echo "### Game data"
+            echo
+            echo "Coriolis code \`$(git -C upstream/coriolis rev-parse --short HEAD)\` ($(git -C upstream/coriolis log -1 --format=%as)), data \`$(git -C upstream/coriolis-data rev-parse --short HEAD)\` ($(git -C upstream/coriolis-data log -1 --format=%as))."
+            echo
+            echo "### Install or update"
+            echo
+            echo "Installed copies offer this update in Claude on their next start. New install: see the README."
+          } >> notes.md
+          cat notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ED Corai v${{ steps.version.outputs.version }}
+          body_path: notes.md
+          prerelease: false

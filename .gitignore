@@ -1,0 +1,12 @@
+node_modules/
+dist/
+target/
+*.cpuprofile
+
+# Personal ship builds (SLEF, journal Loadout, notes): kept locally, never committed
+builds/
+.DS_Store
+
+# Research notes and reports: kept locally
+research_notes/
+reports/

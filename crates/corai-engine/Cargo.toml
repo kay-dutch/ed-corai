@@ -1,0 +1,22 @@
+[package]
+name = "corai-engine"
+description = "Headless port of the Coriolis ship-outfitting engine (module stats, engineering, ship calculations)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+base64 = "0.23.1"
+corai-data.workspace = true
+flate2 = "1.1.11"
+indexmap.workspace = true
+lz-str = "0.2.1"
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true

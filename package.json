@@ -1,0 +1,38 @@
+{
+  "name": "ed-corai",
+  "version": "0.1.0",
+  "description": "Elite Dangerous ship-build optimiser (MCP server) on the Coriolis engine",
+  "main": "dist/server.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p .",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "start": "node --no-deprecation dist/server.cjs",
+    "oracle": "node scripts/build.mjs oracle && node --no-deprecation dist/oracle.cjs 400 7 > crates/corai-engine/tests/fixtures/oracle.json",
+    "update-upstream": "node scripts/update-upstream.mjs"
+  },
+  "license": "MIT",
+  "author": "kay-dutch",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kay-dutch/ed-corai.git"
+  },
+  "homepage": "https://github.com/kay-dutch/ed-corai",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "lodash": "^4.18.1",
+    "lz-string": "^1.5.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/lodash": "^4.17.27",
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "private": true
+}

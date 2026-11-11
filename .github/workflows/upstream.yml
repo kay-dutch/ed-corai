@@ -1,0 +1,47 @@
+name: upstream
+
+# Weekly: pull the newest Coriolis code and data, run the tests and open a pull request with
+# the list of new and changed ships and modules. Nothing is merged or released automatically.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      CORAI_UPDATE_CHECK: "0"
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Update and test
+        id: update
+        run: |
+          set +e
+          node scripts/update-upstream.mjs --keep --report upstream-report.md
+          echo "failed=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          branch: upstream/coriolis
+          commit-message: Update Coriolis code and data
+          title: "Update Coriolis code and data${{ steps.update.outputs.failed != '0' && ' (tests failing)' || '' }}"
+          body-path: upstream-report.md
+          add-paths: |
+            upstream/coriolis
+            upstream/coriolis-data
+          delete-branch: true

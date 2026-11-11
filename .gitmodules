@@ -1,0 +1,8 @@
+[submodule "upstream/coriolis"]
+	path = upstream/coriolis
+	url = https://github.com/EDCD/coriolis.git
+	branch = develop
+[submodule "upstream/coriolis-data"]
+	path = upstream/coriolis-data
+	url = https://github.com/EDCD/coriolis-data.git
+	branch = develop
