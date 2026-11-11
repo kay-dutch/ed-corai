@@ -28,7 +28,9 @@ Coriolis or EDSY.
 - Compares hulls: runs the same goal over every ship (or a subset) and ranks them.
 - Evaluates and tweaks existing builds: paste a Coriolis link, an EDSY export, or a journal
   Loadout, change a slot, see the effect.
-- Exports builds as SLEF or journal JSON for EDSY, Coriolis, Inara and EDDiscovery.
+- Converts builds between formats: paste a Coriolis link, an EDSY SLEF export or a journal
+  Loadout and get it back as a Coriolis link, an EDSY import link, SLEF or journal JSON (for
+  EDSY, Coriolis, Inara and EDDiscovery).
 - Reports constraints it could not meet instead of quietly ignoring them.
 
 ### Tools exposed to Claude
@@ -241,6 +243,10 @@ Paste a Coriolis link, an EDSY SLEF export or a journal Loadout.
 **Take it to the game**
 
 > Give me SLEF for EDSY and the Coriolis link.
+
+> Open this Coriolis build in EDSY: <link>
+
+> Here is my SLEF from EDSY. Give me a Coriolis link.
 
 ### Tips
 
