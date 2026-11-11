@@ -10,7 +10,9 @@
 [![Node.js][badge-node]](https://nodejs.org/)
 [![Elite Dangerous][badge-ed]](https://www.elitedangerous.com/)
 
-ED Corai is an MCP server that plugs into Claude.
+ED Corai is an MCP server: it plugs into Claude, and into any other AI app that supports the
+[Model Context Protocol](https://modelcontextprotocol.io/) (OpenAI Codex, Gemini CLI, GitHub
+Copilot in VS Code, Cursor and others).
 
 Ask for a build in plain words — *"longest-range Krait Mk II with a fuel scoop, AFMU and SRV bay"*,
 *"tankiest Fer-de-Lance that still does 150 sustained DPS"*, *"which medium ship carries the most
@@ -33,7 +35,7 @@ Coriolis or EDSY.
   EDSY, Coriolis, Inara and EDDiscovery).**
 - Reports constraints it could not meet instead of quietly ignoring them.
 
-### Tools exposed to Claude
+### Tools exposed to the assistant
 
 | Tool | Purpose |
 |---|---|
@@ -152,9 +154,74 @@ Add to `claude_desktop_config.json` (Settings → Developer → Edit Config):
 Restart Claude Desktop afterwards. If it reports that `node` cannot be found (common with nvm or
 other version managers), put the full path that `which node` prints in `command`.
 
+### Other MCP apps
+
+ED Corai runs on your computer, so it works in any app that can start a local MCP server. Every
+app needs the same two things: the command `node` and the full path to `dist/server.cjs`.
+
+**OpenAI Codex CLI**, in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.ed-corai]
+command = "node"
+args = ["/absolute/path/to/ed-corai/dist/server.cjs"]
+```
+
+**Gemini CLI**, in `~/.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "ed-corai": {
+      "command": "node",
+      "args": ["/absolute/path/to/ed-corai/dist/server.cjs"]
+    }
+  }
+}
+```
+
+**GitHub Copilot in VS Code** (agent mode), in `.vscode/mcp.json`, or run *MCP: Add Server* from
+the command palette:
+
+```json
+{
+  "servers": {
+    "ed-corai": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/absolute/path/to/ed-corai/dist/server.cjs"]
+    }
+  }
+}
+```
+
+**Cursor, Windsurf, Cline, LM Studio** and most other apps take the same `mcpServers` block as
+Claude Desktop above, in their own MCP settings file.
+
+**Your own agent**: with the OpenAI Agents SDK, start it as a stdio server:
+
+```python
+from agents.mcp import MCPServerStdio
+
+ed_corai = MCPServerStdio(params={"command": "node", "args": ["/absolute/path/to/ed-corai/dist/server.cjs"]})
+```
+
+Things to know outside Claude:
+
+- **Use a large model.** A good answer takes several tool calls and reads large results. Big
+  models (GPT-5, Gemini Pro, Claude) handle it; small local models often lose the thread.
+- **Some apps drop the server's instructions.** ED Corai sends a short guide on how to use its
+  tools (lock the slots you are not changing, keep what the build already does as minimums). If
+  results look careless, tell the model: *"Read list_metrics first. Lock every slot I don't
+  mention."*
+- **Ask for updates yourself.** Not every app shows the model the update notice; ask *"check for
+  ED Corai updates"* now and then.
+- **ChatGPT (app and website)** only connects to MCP servers hosted on the internet, not to
+  programs on your computer, so it cannot use ED Corai as it is.
+
 ### Options
 
-Most behaviour is chosen per request, and Claude picks sensible values from your wording. You can
+Most behaviour is chosen per request, and the assistant picks sensible values from your wording. You can
 also ask for them directly:
 
 | Option | Default | Meaning |
@@ -188,9 +255,9 @@ path when running the CLI, e.g. `node dist/cli.cjs evaluate builds/my-corvette.s
 
 ## Updating
 
-At start-up ED Corai checks GitHub for a newer release, at most once per launch, and Claude tells
-you when one is out. Say yes and it updates itself: it fetches the release, refreshes the game
-data, reinstalls and rebuilds. Then restart it (`/mcp` in Claude Code, or restart Claude Desktop).
+At start-up ED Corai checks GitHub for a newer release, at most once per launch, and the assistant
+tells you when one is out. Say yes and it updates itself: it fetches the release, refreshes the
+game data, reinstalls and rebuilds. Then restart it (`/mcp` in Claude Code, or restart your app).
 You can also ask "is there an update?" at any time.
 
 The automatic update needs a git clone without local changes. Otherwise, or by hand:
@@ -207,7 +274,7 @@ install. New ships and modules reach ED Corai once they are in Coriolis.
 
 ## Using it
 
-Talk to Claude as you would to an experienced builder. It turns the request into an objective and
+Talk to the assistant as you would to an experienced builder. It turns the request into an objective and
 constraints, runs the tools and answers with the numbers and links.
 
 **Find a build**
