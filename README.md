@@ -25,7 +25,7 @@ Coriolis or EDSY.
   modules, cost cap, power budget, weapon consistency, ...).
 - Engineering included by default: grade-5 blueprints at best roll plus the best experimental
   effect for each module. Can be switched off for stock builds.
-- **Compares hulls: runs the same goal over every ship (or a subset) and ranks them.
+- Compares hulls: runs the same goal over every ship (or a subset) and ranks them.
 - Evaluates and tweaks existing builds: paste a Coriolis link, an EDSY export, or a journal
   Loadout, change a slot, see the effect.
 - **Converts builds between formats: paste a Coriolis link, an EDSY SLEF export or a journal
