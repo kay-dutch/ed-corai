@@ -15,19 +15,6 @@ use crate::jsmath::{js_round, num, or, truthy};
 const RESISTANCES: [&str; 4] = ["explres", "kinres", "thermres", "causres"];
 
 /// Pre-engineered modules Coriolis applies at grade 1 instead of 5 when first placed.
-const GRADE1_FIRST: [&str; 4] = [
-    "Hpt_HeatSinkLauncher_Turret_Tiny",
-    "Hpt_Mining_AbrBlstr_Fixed_Small",
-    "Hpt_Mining_AbrBlstr_Turret_Small",
-    "Hpt_MultiCannon_Fixed_Medium",
-];
-/// ... and the (slightly different) list used when applying each pre-engineered blueprint.
-const GRADE1_EACH: [&str; 3] = [
-    "Hpt_HeatSinkLauncher_Turret_Tiny",
-    "Hpt_Mining_AbrBlstr_Fixed_Small",
-    "Hpt_MultiCannon_Fixed_Medium",
-];
-
 /// Share of a weapon's damage by type.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct DamageDist {
@@ -55,6 +42,9 @@ pub struct AppliedBlueprint {
     pub key: &'static str,
     pub def: &'static BlueprintDef,
     pub grade: u8,
+    /// False when Coriolis set it up for a pre-engineered module: that record carries no blueprint
+    /// id, so share codes leave it out and decoding rebuilds it from the module definition.
+    pub coded: bool,
 }
 
 /// An experimental effect applied to a module.
@@ -85,6 +75,8 @@ pub struct Module {
     pub(crate) mods: IndexMap<String, f64>,
     pub(crate) blueprint: Option<AppliedBlueprint>,
     pub(crate) special: Option<AppliedSpecial>,
+    /// Damage-type split stored by a blueprint (object-type `damagedist` modification).
+    pub(crate) damagedist_mod: Option<&'static IndexMap<String, f64>>,
     /// Stats resolved from the current engineering; cleared by every mutation.
     resolved: OnceLock<Resolved>,
 }
@@ -277,6 +269,7 @@ impl Module {
             mods: IndexMap::new(),
             blueprint: None,
             special: None,
+            damagedist_mod: None,
             resolved: OnceLock::new(),
         }
     }
@@ -480,6 +473,9 @@ impl Module {
                 return DamageDist::from_map(d);
             }
         }
+        if let Some(d) = self.damagedist_mod {
+            return DamageDist::from_map(d);
+        }
         self.def
             .damagedist
             .as_ref()
@@ -615,10 +611,29 @@ impl Module {
                 grade,
             });
         }
-        self.blueprint = Some(AppliedBlueprint { key, def, grade });
+        self.blueprint = Some(AppliedBlueprint {
+            key,
+            def,
+            grade,
+            coded: true,
+        });
         self.mods.clear();
+        self.damagedist_mod = None;
         for (feature, value) in quality_values(def, grade, quality) {
             self.set_modification(feature, value, false);
+        }
+        // Object-type features (a replacement damage split) are stored as given, if the group
+        // accepts the modification at all (Ship.setModification).
+        if let Some(g) = def.grades.get(grade.to_string().as_str()) {
+            for (name, feature) in &g.features {
+                if let corai_data::Feature::DamageDist(d) = feature
+                    && self
+                        .group_engineering()
+                        .is_none_or(|ge| ge.modifications.iter().any(|m| m == name))
+                {
+                    self.damagedist_mod = Some(d);
+                }
+            }
         }
         self.invalidate();
         Ok(())
@@ -639,40 +654,97 @@ impl Module {
         Ok(())
     }
 
-    /// What `Ship.use()` does when a pre-engineered module is first placed: fixed blueprints are
-    /// applied cumulatively at max roll and the default experimental is attached.
+    /// What `Ship.use()` does when a pre-engineered module is placed. Modules with explicit
+    /// tech-broker modifiers get a blueprint record without a code id; the others get the full first
+    /// blueprint (with its id, so share codes store it).
     pub fn init_pre_engineered(&mut self) {
+        if self.blueprint.is_some() || self.special.is_some() {
+            return;
+        }
+        self.apply_pre_engineered(true, false);
+        let explicit = self
+            .def
+            .pre_engineered
+            .as_ref()
+            .is_some_and(|pe| pe.modifiers.is_some());
+        if let Some(b) = self.blueprint.as_mut() {
+            b.coded = !explicit;
+        }
+    }
+
+    /// `Ship._applyPreEngineeredModifiers`. With `setup_blueprint` the first fixed blueprint (without
+    /// a code id) and the first experimental are recorded; `clear_first` drops existing
+    /// modifications. The stats come either from the module's explicit tech-broker modifiers or,
+    /// when it has none, from every fixed blueprint added onto the current values at best roll.
+    pub(crate) fn apply_pre_engineered(&mut self, setup_blueprint: bool, clear_first: bool) {
         let Some(pe) = &self.def.pre_engineered else {
             return;
         };
-        if pe.blueprints.is_empty() || self.blueprint.is_some() || self.special.is_some() {
+        if pe.blueprints.is_empty() {
             return;
         }
-        let symbol = self.def.symbol.as_deref().unwrap_or_default();
-        if let Some((key, def)) = find_blueprint(pe.blueprints[0].trim(), self.def) {
-            let grade = if GRADE1_FIRST.contains(&symbol) { 1 } else { 5 };
-            self.blueprint = Some(AppliedBlueprint { key, def, grade });
-        }
-        if let Some(effect) = pe.experimental_effects.first() {
-            let data = &*DATA;
-            self.special = data
-                .modifications
-                .specials
-                .iter()
-                .find(|(_, s)| &s.edname == effect)
-                .map(|(k, def)| AppliedSpecial {
-                    key: k.as_str(),
+        let data = &*DATA;
+        let grade = if pe.grade == 0 { 5 } else { pe.grade };
+        if setup_blueprint {
+            self.blueprint = find_blueprint(pe.blueprints[0].trim(), self.def).map(|(key, def)| {
+                AppliedBlueprint {
+                    key,
                     def,
-                });
+                    grade,
+                    coded: false,
+                }
+            });
+            if let Some(effect) = pe.experimental_effects.first() {
+                self.special = data
+                    .modifications
+                    .specials
+                    .iter()
+                    .find(|(_, s)| &s.edname == effect)
+                    .map(|(k, def)| AppliedSpecial {
+                        key: k.as_str(),
+                        def,
+                    });
+            }
         }
-        let grade = if GRADE1_EACH.contains(&symbol) { 1 } else { 5 };
-        for name in &pe.blueprints {
-            let Some((_, def)) = find_blueprint(name.trim(), self.def) else {
-                continue;
-            };
-            for (feature, value) in quality_values(def, grade, 1.0) {
-                let current = or(self.mod_value(feature, true), 0.0);
-                self.set_modification(feature, current + value, true);
+        if clear_first {
+            self.mods.clear();
+            self.damagedist_mod = None;
+        }
+        if let Some(modifiers) = &pe.modifiers {
+            for (feature, value) in modifiers {
+                let Some(m) = data.modifications.modifications.get(feature) else {
+                    continue;
+                };
+                let scaled = match m.kind {
+                    ModificationKind::Percentage => value * 10000.0,
+                    ModificationKind::Numeric => value * 100.0,
+                    ModificationKind::Object => continue,
+                };
+                self.set_modification(feature, scaled, true);
+            }
+        } else {
+            for name in &pe.blueprints {
+                let Some((_, def)) = find_blueprint(name.trim(), self.def) else {
+                    continue;
+                };
+                for (feature, value) in quality_values(def, grade, 1.0) {
+                    let current = or(self.mod_value(feature, true), 0.0);
+                    self.set_modification(feature, current + value, true);
+                }
+            }
+        }
+        self.invalidate();
+    }
+
+    /// Re-applies a blueprint's object-type features (a replacement damage split), which share
+    /// codes cannot store; `buildWith` does this for engineered hardpoints.
+    pub(crate) fn restore_object_features(&mut self) {
+        let Some(b) = &self.blueprint else { return };
+        if let Some(g) = b.def.grades.get(b.grade.to_string().as_str()) {
+            for feature in g.features.values() {
+                if let corai_data::Feature::DamageDist(d) = feature {
+                    self.damagedist_mod = Some(d);
+                }
             }
         }
         self.invalidate();

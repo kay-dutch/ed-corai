@@ -15,8 +15,7 @@ use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use indexmap::IndexMap;
 
-use crate::jsmath::or;
-use crate::module::{AppliedBlueprint, AppliedSpecial, Module, find_blueprint, quality_values};
+use crate::module::{AppliedBlueprint, AppliedSpecial, Module, find_blueprint};
 use crate::ship::{Ship, ShipError, Slot, hardpoint_module, internal_module, standard_module};
 
 const SLOT_DONE: i8 = -1;
@@ -26,13 +25,154 @@ const MOD_GRADE: i8 = -3;
 const MOD_SPECIAL: i8 = -4;
 /// The object-typed `damagedist` modification; its value is a 4-byte string, never a number.
 const MOD_OBJECT_ID: i8 = 40;
-/// Pre-engineered modules Coriolis rebuilds at grade 1 rather than 5.
-const GRADE1_EACH: [&str; 3] = [
-    "Hpt_HeatSinkLauncher_Turret_Tiny",
-    "Hpt_Mining_AbrBlstr_Fixed_Small",
-    "Hpt_MultiCannon_Fixed_Medium",
+
+// ---------------------------------------------------------------- link migration
+
+/// Internal layouts, as (kind, class), of ships whose internal slots changed after 'A' links were
+/// issued (Coriolis `LinkMigration.js`). 'A' codes for them are positional against these.
+const OLD_INTERNAL_LAYOUTS: &[(&str, &[(&str, u8)])] = &[
+    (
+        "type_6_transporter",
+        &[
+            ("num", 5),
+            ("num", 5),
+            ("num", 4),
+            ("num", 4),
+            ("num", 3),
+            ("num", 2),
+            ("num", 2),
+            ("num", 1),
+            ("pas", 1),
+        ],
+    ),
+    (
+        "type_7_transport",
+        &[
+            ("num", 6),
+            ("num", 6),
+            ("num", 6),
+            ("num", 5),
+            ("num", 5),
+            ("num", 5),
+            ("num", 3),
+            ("num", 3),
+            ("num", 2),
+            ("num", 1),
+            ("pas", 1),
+        ],
+    ),
+    (
+        "imperial_clipper",
+        &[
+            ("num", 7),
+            ("num", 6),
+            ("num", 4),
+            ("num", 4),
+            ("num", 3),
+            ("num", 3),
+            ("num", 2),
+            ("num", 2),
+            ("num", 1),
+            ("pas", 1),
+        ],
+    ),
+    (
+        "federal_dropship",
+        &[
+            ("num", 6),
+            ("num", 5),
+            ("num", 5),
+            ("num", 4),
+            ("mil", 4),
+            ("mil", 4),
+            ("num", 3),
+            ("num", 3),
+            ("num", 2),
+            ("num", 1),
+            ("pas", 1),
+        ],
+    ),
 ];
 
+/// Hardpoint layouts (class per mount, 0 = utility) of ships that gained a mount since.
+const OLD_HARDPOINT_LAYOUTS: &[(&str, &[u8])] = &[("asp_scout", &[2, 2, 1, 1, 0, 0])];
+
+fn internal_kind(slot: &Slot) -> &'static str {
+    match slot.name {
+        Some("PlanetaryApproachSuite") => "pas",
+        Some("Military") => "mil",
+        Some("Cargo") => "cargo",
+        _ => "num",
+    }
+}
+
+/// `buildInternalRemap`: for each current internal slot, the old slot it takes its module from.
+/// Old slots fill the last current slots of the same kind and class.
+fn internal_remap(old: &[(&str, u8)], new: &[Slot]) -> Vec<Option<usize>> {
+    let mut map = vec![None; new.len()];
+    let mut keys: Vec<(&str, u8)> = new
+        .iter()
+        .map(|s| (internal_kind(s), s.max_class))
+        .collect();
+    keys.dedup();
+    let mut seen = Vec::new();
+    for key in keys {
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        let new_idx: Vec<usize> = (0..new.len())
+            .filter(|&i| (internal_kind(&new[i]), new[i].max_class) == key)
+            .collect();
+        let old_idx: Vec<usize> = (0..old.len()).filter(|&i| old[i] == key).collect();
+        let offset = new_idx.len() as isize - old_idx.len() as isize;
+        for (k, &oi) in old_idx.iter().enumerate() {
+            if let Some(&ni) = usize::try_from(offset + k as isize)
+                .ok()
+                .and_then(|j| new_idx.get(j))
+            {
+                map[ni] = Some(oi);
+            }
+        }
+    }
+    map
+}
+
+/// `buildHardpointRemap`: old mounts fill the first current mounts of the same class.
+fn hardpoint_remap(old: &[u8], new: &[Slot]) -> Vec<Option<usize>> {
+    let mut map = vec![None; new.len()];
+    let mut classes: Vec<u8> = new.iter().map(|s| s.max_class).collect();
+    classes.sort_unstable();
+    classes.dedup();
+    for class in classes {
+        let new_idx = (0..new.len()).filter(|&i| new[i].max_class == class);
+        let old_idx = (0..old.len()).filter(|&i| old[i] == class);
+        for (ni, oi) in new_idx.zip(old_idx) {
+            map[ni] = Some(oi);
+        }
+    }
+    map
+}
+
+/// Moves a positional array decoded against an old layout onto the current one. Arrays run
+/// `[hatch or bulkhead, ...standard, ...hardpoints, ...internal]`; missing entries become `fill`.
+fn remap_parallel<T: Clone>(
+    old: &[T],
+    head: usize,
+    old_hp: usize,
+    hp_map: &[Option<usize>],
+    int_map: &[Option<usize>],
+    fill: T,
+) -> Vec<T> {
+    let pick = |i: Option<usize>| {
+        i.and_then(|i| old.get(i).cloned())
+            .unwrap_or_else(|| fill.clone())
+    };
+    let mut out: Vec<T> = (0..head).map(|i| pick(Some(i))).collect();
+    out.extend(hp_map.iter().map(|oi| pick(oi.map(|o| head + o))));
+    out.extend(int_map.iter().map(|oi| pick(oi.map(|o| head + old_hp + o))));
+    out
+}
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum CodecError {
@@ -50,7 +190,8 @@ pub enum CodecError {
 
 /// The Coriolis build code for a ship.
 pub fn encode(ship: &Ship) -> String {
-    let mut code = format!("A{}", ship.bulkhead_index);
+    // 'B' = Coriolis link format v3: slots in the current ship-slots.json order.
+    let mut code = format!("B{}", ship.bulkhead_index);
     for slot in ship.all_slots() {
         match &slot.module {
             Some(m) => code.push_str(&m.def.id),
@@ -120,7 +261,7 @@ pub fn encode_modifications(ship: &Ship) -> Option<Vec<u8>> {
                 Some((def.id as i8, m.mod_value(k, true).unwrap_or(0.0)))
             })
             .collect();
-        let blueprint = m.blueprint.as_ref().filter(|b| b.def.id != 0);
+        let blueprint = m.blueprint.as_ref().filter(|b| b.coded && b.def.id != 0);
         if mods.is_empty() && blueprint.is_none() {
             continue;
         }
@@ -249,17 +390,37 @@ pub fn decode(ship_id: &str, code: &str) -> Result<Ship, CodecError> {
     if ids.starts_with(|c: char| ('0'..='4').contains(&c)) {
         return Err(CodecError::LegacyVersion);
     }
+    // 'B' (v3) codes follow the current slot order; 'A' (v2) codes for a few ships follow the
+    // layout they had before slots were added or resized.
+    let current = ids.starts_with('B');
     let ids = ids.get(1..).ok_or(CodecError::Truncated)?;
-    let enabled = digits(parts.next());
-    let priorities = digits(parts.next());
-    let saved = parts
+    let mut enabled = digits(parts.next());
+    let mut priorities = digits(parts.next());
+    let mut saved = parts
         .next()
         .filter(|p| !p.is_empty())
         .map(decode_modifications)
         .unwrap_or_default();
 
     let n_std = ship.standard.len();
-    let n_hp = ship.hardpoints.len();
+    let old_int = (!current)
+        .then(|| {
+            OLD_INTERNAL_LAYOUTS
+                .iter()
+                .find(|(id, _)| *id == ship_id)
+                .map(|(_, l)| *l)
+        })
+        .flatten();
+    let old_hp = (!current)
+        .then(|| {
+            OLD_HARDPOINT_LAYOUTS
+                .iter()
+                .find(|(id, _)| *id == ship_id)
+                .map(|(_, l)| *l)
+        })
+        .flatten();
+    let n_hp = old_hp.map_or(ship.hardpoints.len(), <[u8]>::len);
+    let n_int = old_int.map_or(ship.internal.len(), <[(&str, u8)]>::len);
     let mut pos = 1;
     let mut read = || -> Result<Option<String>, CodecError> {
         if ids.get(pos..pos + 1) == Some("-") {
@@ -274,11 +435,33 @@ pub fn decode(ship_id: &str, code: &str) -> Result<Ship, CodecError> {
         Ok(Some(id))
     };
     let std_ids: Vec<_> = (0..n_std).map(|_| read()).collect::<Result<_, _>>()?;
-    let hp_ids: Vec<_> = (0..n_hp).map(|_| read()).collect::<Result<_, _>>()?;
-    let int_ids: Vec<_> = (0..ship.internal.len())
-        .map(|_| read())
-        .collect::<Result<_, _>>()?;
+    let mut hp_ids: Vec<_> = (0..n_hp).map(|_| read()).collect::<Result<_, _>>()?;
+    let mut int_ids: Vec<_> = (0..n_int).map(|_| read()).collect::<Result<_, _>>()?;
     let bulkhead: usize = ids.get(0..1).and_then(|c| c.parse().ok()).unwrap_or(0);
+
+    if old_hp.is_some() || old_int.is_some() {
+        let hp_map = old_hp.map_or_else(
+            || (0..ship.hardpoints.len()).map(Some).collect(),
+            |l| hardpoint_remap(l, &ship.hardpoints),
+        );
+        let int_map = old_int.map_or_else(
+            || (0..ship.internal.len()).map(Some).collect(),
+            |l| internal_remap(l, &ship.internal),
+        );
+        let head = 1 + n_std;
+        hp_ids = hp_map
+            .iter()
+            .map(|oi| oi.and_then(|o| hp_ids.get(o).cloned().flatten()))
+            .collect();
+        int_ids = int_map
+            .iter()
+            .map(|oi| oi.and_then(|o| int_ids.get(o).cloned().flatten()))
+            .collect();
+        enabled = enabled.map(|e| remap_parallel(&e, head, n_hp, &hp_map, &int_map, Some(1)));
+        priorities = priorities.map(|p| remap_parallel(&p, head, n_hp, &hp_map, &int_map, Some(0)));
+        saved = remap_parallel(&saved, head, n_hp, &hp_map, &int_map, None);
+    }
+    let n_hp = ship.hardpoints.len();
 
     // `enabled[i] * 1` / `priorities[i] * 1`; a missing entry is NaN (disabled / band 0).
     let flag = |i: usize| {
@@ -363,7 +546,12 @@ fn restore(m: &mut Module, saved: SavedSlot, category: Category) {
             .find(|b| b.id == id)?
             .fdname;
         let (key, def) = find_blueprint(fdname, m.def)?;
-        Some(AppliedBlueprint { key, def, grade })
+        Some(AppliedBlueprint {
+            key,
+            def,
+            grade,
+            coded: true,
+        })
     });
     let special = saved.special.and_then(|id| {
         data.modifications
@@ -375,76 +563,22 @@ fn restore(m: &mut Module, saved: SavedSlot, category: Category) {
                 def,
             })
     });
-    let Some(pe) = m.def.pre_engineered.as_ref() else {
+    if m.def.pre_engineered.is_none() {
         m.blueprint = blueprint;
         m.special = special.filter(|_| m.blueprint.is_some());
-        return;
-    };
-    let symbol = m.def.symbol.as_deref().unwrap_or_default();
-    let cumulative = |m: &mut Module, values: Vec<(&'static str, f64)>, force: bool| {
-        for (feature, value) in values {
-            let current = or(m.mod_value(feature, true), 0.0);
-            m.set_modification(feature, current + value, force);
-        }
-    };
-    if let Some(b) = blueprint {
-        // Saved pre-engineered module: rebuild its fixed engineering from scratch.
-        m.blueprint = Some(b);
-        m.special = special;
-        m.mods.clear();
-        let grade = if GRADE1_EACH.contains(&symbol) { 1 } else { 5 };
-        for name in &pe.blueprints {
-            if let Some((_, def)) = find_blueprint(name.trim(), m.def) {
-                cumulative(m, quality_values(def, grade, 1.0), true);
-            }
+        if category == Category::Hardpoint && m.blueprint.is_some() {
+            m.restore_object_features();
         }
         return;
     }
-    // No saved engineering (old codes): Coriolis' default pre-engineering, which differs by category.
-    m.blueprint = pe
-        .blueprints
-        .first()
-        .and_then(|n| find_blueprint(n.trim(), m.def))
-        .map(|(key, def)| AppliedBlueprint {
-            key,
-            def,
-            grade: pe.grade,
-        });
-    m.special = pe
-        .experimental_effects
-        .first()
-        .and_then(|e| {
-            data.modifications
-                .specials
-                .iter()
-                .find(|(_, s)| &s.edname == e)
-        })
-        .map(|(k, def)| AppliedSpecial {
-            key: k.as_str(),
-            def,
-        });
-    for name in &pe.blueprints {
-        let Some((_, def)) = find_blueprint(name.trim(), m.def) else {
-            continue;
-        };
-        match category {
-            Category::Hardpoint => cumulative(m, quality_values(def, pe.grade, 1.0), true),
-            // Upstream applies grade 5's first bound unscaled here; reproduced as-is.
-            Category::Other => {
-                let Some(g5) = def.grades.get("5") else {
-                    continue;
-                };
-                let values = g5
-                    .features
-                    .iter()
-                    .filter_map(|(f, feature)| match feature {
-                        corai_data::Feature::Range([a, _]) => Some((f.as_str(), *a)),
-                        corai_data::Feature::DamageDist(_) => None,
-                    })
-                    .collect();
-                cumulative(m, values, false);
-            }
-        }
+    if let Some(b) = blueprint {
+        // Saved pre-engineered module: keep the saved blueprint, rebuild its fixed engineering.
+        m.blueprint = Some(b);
+        m.special = special;
+        m.apply_pre_engineered(false, true);
+    } else {
+        // No saved blueprint: set up as when first placed, on top of any saved modifications.
+        m.apply_pre_engineered(true, false);
     }
 }
 
@@ -549,7 +683,7 @@ mod tests {
         fsd.set_special(Some("special_fsd_heavy")).expect("special");
         ship.recalc();
         let url = outfit_url(&ship);
-        assert!(url.starts_with("https://coriolis.io/outfit/krait_mkii?code=A"));
+        assert!(url.starts_with("https://coriolis.io/outfit/krait_mkii?code=B"));
         let back = from_url(&url).expect("parses");
         assert_eq!(back.stats, ship.stats);
         assert_eq!(encode(&back), encode(&ship));

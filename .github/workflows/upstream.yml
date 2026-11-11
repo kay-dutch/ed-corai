@@ -26,6 +26,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
 
       - name: Update and test
         id: update
@@ -44,4 +46,5 @@ jobs:
           add-paths: |
             upstream/coriolis
             upstream/coriolis-data
+            crates/corai-engine/tests/fixtures/oracle.json
           delete-branch: true

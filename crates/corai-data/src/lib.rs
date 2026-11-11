@@ -219,7 +219,13 @@ pub struct PreEngineered {
     #[serde(default)]
     pub grade_changeable: bool,
     pub blueprints: Vec<String>,
+    /// Grade of the fixed blueprints; Coriolis treats a missing grade as 5.
+    #[serde(default)]
     pub grade: u8,
+    /// Exact tech-broker values (in display units, e.g. 0.5 = +50 %). When present they replace the
+    /// blueprint roll computation entirely.
+    #[serde(default)]
+    pub modifiers: Option<IndexMap<String, f64>>,
     #[serde(default)]
     pub can_apply_experimental: bool,
     #[serde(default)]

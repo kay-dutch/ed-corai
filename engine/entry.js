@@ -11,3 +11,4 @@ export * as BlueprintFunctions from '../upstream/coriolis/src/app/utils/Blueprin
 export { Ships, Modules, Modifications } from 'coriolis-data/dist';
 export * as JournalUtils from '../upstream/coriolis/src/app/utils/JournalUtils';
 export * as CompanionApiUtils from '../upstream/coriolis/src/app/utils/CompanionApiUtils';
+export * as LinkMigration from '../upstream/coriolis/src/app/shipyard/LinkMigration';

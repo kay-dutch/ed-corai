@@ -82,8 +82,9 @@ assumption is a setting you can change.
 
 - **Resistances** follow the game's stacking rules: shield booster resistances get diminishing
   returns above 30 %, the generator's own resistance is exempt, SYS pips add
-  `60 % × (pips/4)^0.85` on shields only. Hull stacking uses Coriolis's rule (EDSY's differs in
-  corner cases).
+  `60 % × (pips/4)^0.85` on shields only. Hull reinforcement resistances stack one module at a
+  time, weakest first: a module's resistance above 30 % counts double, the combined value gets
+  diminishing returns between 30 % and 65 %, and the total caps at 75 %.
 - **Hardness vs piercing** reduces hull damage by `piercing / hardness` when a weapon's
   penetration is below the target's hardness; this is why piercing efficiency and time to kill are
   reported against a reference opponent.

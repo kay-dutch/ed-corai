@@ -134,21 +134,40 @@ if (anyNew && !checkOnly) {
 
   say();
   say('## Tests');
+  const tail = (e) => String(e.stdout ?? '').split('\n').filter((l) => /not ok|fail|Error|panicked|mismatches/i.test(l)).slice(0, 15);
   try {
     sh('npm', ['test'], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
     say('- npm test passed.');
   } catch (e) {
     failed = true;
-    const tail = String(e.stdout ?? '').split('\n').filter((l) => /not ok|fail|Error/i.test(l)).slice(0, 15);
     say('- npm test FAILED:');
-    for (const l of tail) say(`  ${l}`);
-    if (!keep) {
-      for (const dir of SUBMODULES) git(dir, 'checkout', '--quiet', old[dir]);
-      sh('node', ['scripts/build.mjs']);
-      say('- Rolled back to the previous Coriolis commits (use --keep to keep the update).');
+    for (const l of tail(e)) say(`  ${l}`);
+  }
+  // The Rust engine is checked against the Node (Coriolis) engine on the new data: regenerate the
+  // parity fixture and run the Rust tests. Skipped where cargo is not installed.
+  if (!failed) {
+    let cargo = true;
+    try { sh('cargo', ['--version']); } catch { cargo = false; }
+    if (!cargo) {
+      say('- Rust: cargo not found, Rust parity not checked.');
+    } else {
+      try {
+        sh('npm', ['run', 'oracle'], { maxBuffer: 64 * 1024 * 1024 });
+        sh('cargo', ['test', '--workspace', '--locked'], { maxBuffer: 64 * 1024 * 1024 });
+        say('- Rust parity fixture regenerated; cargo test passed.');
+      } catch (e) {
+        failed = true;
+        say('- Rust parity FAILED on the new data (cargo test):');
+        for (const l of tail(e)) say(`  ${l}`);
+      }
     }
   }
-  say('- Rust: the engine parity fixture (`npm run oracle`) needs regenerating once the Rust port matches the new data.');
+  if (failed && !keep) {
+    for (const dir of SUBMODULES) git(dir, 'checkout', '--quiet', old[dir]);
+    sh('git', ['checkout', '--quiet', '--', 'crates/corai-engine/tests/fixtures/oracle.json']);
+    sh('node', ['scripts/build.mjs']);
+    say('- Rolled back to the previous Coriolis commits (use --keep to keep the update).');
+  }
 }
 
 say();

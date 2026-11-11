@@ -19,3 +19,4 @@ export const Modifications: {
 };
 export const JournalUtils: { shipFromLoadoutJSON(json: unknown): any };
 export const CompanionApiUtils: { SHIP_FD_NAME_TO_CORIOLIS_NAME: Record<string, string> };
+export const LinkMigration: { OLD_INTERNAL_LAYOUTS: Record<string, { kind: string; class: number }[]>; OLD_HARDPOINT_LAYOUTS: Record<string, number[]> };

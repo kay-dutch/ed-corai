@@ -15,6 +15,16 @@ use std::io::Read;
 #[derive(Deserialize)]
 struct Fixture {
     cases: Vec<Case>,
+    /// Pre-v3 ('A') codes for ships whose slot layout changed, and what Coriolis decodes from them.
+    #[serde(default)]
+    legacy: Vec<Legacy>,
+}
+
+#[derive(Deserialize)]
+struct Legacy {
+    ship: String,
+    code: String,
+    decoded: Value,
 }
 
 #[derive(Deserialize)]
@@ -110,6 +120,58 @@ fn rebuild(case: &Case) -> Ship {
     ship
 }
 
+/// Per-module figures keyed like the oracle's slot keys (`standard:pp`, `hardpoint:2`, ...).
+fn module_records(ship: &Ship) -> Value {
+    let num = |x: Option<f64>| match x {
+        Some(v) if v.is_finite() => Value::from(v),
+        _ => Value::Null,
+    };
+    let rec = |m: &corai_engine::Module| {
+        serde_json::json!({
+            "grp": m.grp(), "mass": num(m.get("mass")), "power": num(m.get("power")),
+            "damage": num(m.get("damage")), "rof": num(Some(m.rof())), "dps": num(Some(m.dps())),
+            "sdps": num(Some(m.sdps())), "eps": num(Some(m.eps())), "hps": num(Some(m.hps())),
+        })
+    };
+    let mut out = serde_json::Map::new();
+    for (i, slot) in ship.standard.iter().enumerate() {
+        if let Some(m) = &slot.module {
+            out.insert(format!("standard:{}", STANDARD_GROUPS[i]), rec(m));
+        }
+    }
+    out.insert("bulkheads".to_string(), rec(&ship.bulkhead));
+    let (mut hp, mut ut) = (0, 0);
+    for slot in &ship.hardpoints {
+        let key = if slot.kind == SlotKind::Hardpoint {
+            hp += 1;
+            format!("hardpoint:{hp}")
+        } else {
+            ut += 1;
+            format!("utility:{ut}")
+        };
+        if let Some(m) = &slot.module {
+            out.insert(key, rec(m));
+        }
+    }
+    for (i, slot) in ship.internal.iter().enumerate() {
+        if let Some(m) = &slot.module {
+            out.insert(format!("internal:{}", i + 1), rec(m));
+        }
+    }
+    Value::Object(out)
+}
+
+/// Groups `.modules.<slot>.<attr>` mismatches by module group, so the report names the module type.
+fn field_key(field: &str, expect: &Value) -> String {
+    if let Some(rest) = field.strip_prefix(".modules.")
+        && let Some((slot, attr)) = rest.rsplit_once('.')
+    {
+        let grp = expect["modules"][slot]["grp"].as_str().unwrap_or("?");
+        return format!(".modules[{grp}].{attr}");
+    }
+    field.to_string()
+}
+
 fn actual(ship: &Ship, opponent: &Ship) -> Value {
     let s = &ship.stats;
     let (unladen, full_tank, laden) = ship.coriolis_jump_stats();
@@ -146,6 +208,7 @@ fn actual(ship: &Ship, opponent: &Ship) -> Value {
         },
         "vsAnaconda": { "shields": vs.shields.total(), "armour": vs.armour.total(), "eps": vs.eps },
         "timeToDrainWep": fin(calc::time_to_drain_wep(ship, 2.0)),
+        "modules": module_records(ship),
     })
 }
 
@@ -214,7 +277,6 @@ fn gunzip_b64(part: &str) -> Vec<u8> {
 }
 
 #[test]
-#[ignore = "fixture predates the Coriolis develop data (Anaconda Mk II); regenerate with `npm run oracle` once the engine port catches up"]
 fn coriolis_codes_round_trip() {
     let fixture = load_fixture();
     let opponent = Ship::stock("anaconda").expect("anaconda");
@@ -283,7 +345,6 @@ fn coriolis_codes_round_trip() {
 }
 
 #[test]
-#[ignore = "fixture predates the Coriolis develop data (Anaconda Mk II); regenerate with `npm run oracle` once the engine port catches up"]
 fn matches_upstream_engine_on_random_builds() {
     let fixture = load_fixture();
     let opponent = Ship::stock("anaconda").expect("anaconda");
@@ -298,7 +359,7 @@ fn matches_upstream_engine_on_random_builds() {
         }
         for (field, msg) in d {
             by_field
-                .entry(field)
+                .entry(field_key(&field, &case.expect))
                 .or_default()
                 .push(format!("case {i} ({}): {msg}", case.ship));
         }
@@ -309,4 +370,24 @@ fn matches_upstream_engine_on_random_builds() {
         fixture.cases.len(),
         report(&by_field)
     );
+}
+
+#[test]
+fn old_links_migrate_to_current_slot_layout() {
+    let fixture = load_fixture();
+    assert!(!fixture.legacy.is_empty(), "fixture has legacy codes");
+    let opponent = Ship::stock("anaconda").expect("anaconda");
+    let mut by_field: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (i, l) in fixture.legacy.iter().enumerate() {
+        let ship = codec::decode(&l.ship, &l.code).expect("legacy code decodes");
+        let mut d = Vec::new();
+        diff("", &l.decoded, &actual(&ship, &opponent), &mut d);
+        for (field, msg) in d {
+            by_field
+                .entry(field)
+                .or_default()
+                .push(format!("legacy {i} ({}): {msg}", l.ship));
+        }
+    }
+    assert!(by_field.is_empty(), "{}", report(&by_field));
 }

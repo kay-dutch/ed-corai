@@ -130,6 +130,34 @@ pub fn diminishing_returns_shields(shield_mult: f64, combined_mult: f64) -> f64 
     }
 }
 
+/// `stackDamageResistance`: one module's resistance folded onto a running armour resistance.
+/// Past 30 % the stack is mapped into [max(30 %, base), 65 %] (half credit).
+pub fn stack_damage_resistance(base: f64, module: f64) -> f64 {
+    const MIN_LOWER_BOUND: f64 = 0.30;
+    const UPPER_BOUND: f64 = 0.65;
+    let lower = MIN_LOWER_BOUND.max(base);
+    let stacked = 1.0 - (1.0 - base) * (1.0 - module);
+    let capped = lower + (stacked - lower) / (1.0 - lower) * (UPPER_BOUND - lower);
+    if capped >= MIN_LOWER_BOUND {
+        capped
+    } else {
+        stacked
+    }
+}
+
+/// `stackArmourResistances`: bulkhead resistance plus hull reinforcement resistances, folded in
+/// ascending order; a module above 30 % counts its excess twice; the result caps at 75 %.
+pub fn stack_armour_resistances(base: f64, modules: &[f64]) -> f64 {
+    let mut sorted = modules.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let mut res = base;
+    for m in sorted {
+        let adapted = if m > 0.3 { m * 2.0 - 0.3 } else { m };
+        res = stack_damage_resistance(res, adapted);
+    }
+    res.min(0.75)
+}
+
 pub fn diminishing_returns_armour(mults: &[f64]) -> f64 {
     let max = mults.iter().copied().fold(0.7, f64::min);
     let combined: f64 = mults.iter().product();
@@ -330,10 +358,10 @@ pub fn armour_metrics(ship: &Ship) -> ArmourMetrics {
             "hr" | "ghrp" | "mahr" => {
                 reinforcement += num(m.r().hullreinforcement);
                 reinforcement += base * num(m.r().hullboost_mod) / 10000.0;
-                expl.push(1.0 - num(m.r().explres));
-                kin.push(1.0 - num(m.r().kinres));
-                therm.push(1.0 - num(m.r().thermres));
-                caus.push(1.0 - num(m.r().causres));
+                expl.push(num(m.r().explres));
+                kin.push(num(m.r().kinres));
+                therm.push(num(m.r().thermres));
+                caus.push(num(m.r().causres));
             }
             "mrp" | "gmrp" => {
                 module_armour += num(m.r().integrity);
@@ -342,14 +370,14 @@ pub fn armour_metrics(ship: &Ship) -> ArmourMetrics {
             _ => {}
         }
     }
+    // Bulkhead and reinforcement resistances combine with the game's sequential stacking and are
+    // reported as damage multipliers (1 - resistance).
     let typed = |res: f64, others: &[f64]| {
         let b = 1.0 - res;
-        let mut all = vec![b];
-        all.extend_from_slice(others);
-        let total = diminishing_returns_armour(&all);
+        let total = 1.0 - stack_armour_resistances(res, others);
         ArmourMults {
             bulkheads: b,
-            reinforcement: total / b,
+            reinforcement: if b == 0.0 { 1.0 } else { total / b },
             total,
         }
     };
