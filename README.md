@@ -6,7 +6,6 @@
 [![Release][badge-release]](../../releases)
 [![CI][badge-ci]](../../actions/workflows/ci.yml)
 [![MCP][badge-mcp]](https://modelcontextprotocol.io/)
-
 [![Rust][badge-rust]](https://www.rust-lang.org/)
 [![Node.js][badge-node]](https://nodejs.org/)
 [![Elite Dangerous][badge-ed]](https://www.elitedangerous.com/)
