@@ -19,11 +19,13 @@ use corai_engine::jsmath::num;
 use corai_engine::{Module, Ship, codec};
 use rayon::prelude::*;
 
+use crate::arrange::{assign_priorities, combat_deployed_draw, tidy_internal_slots};
 use crate::catalog::{
     EngSpec, Filters, MAX_EXPERIMENTAL_WEAPONS, SlotRef, candidates, engineering_options, fits,
     unique_family,
 };
 use crate::metrics::{Better, Metric, MetricContext};
+use crate::validate::validate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -67,6 +69,9 @@ pub struct Constraint {
 /// Which power budget must hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PowerCheck {
+    /// Combat modules powered with hardpoints deployed (non-combat modules are shed by priority, as
+    /// in game), and everything powered with hardpoints retracted.
+    Priority,
     /// Everything on with hardpoints deployed.
     Deployed,
     /// Hardpoints retracted (explorers, traders).
@@ -121,6 +126,9 @@ pub struct Request {
     pub objective: Goal,
     /// Secondary goals, used only to break exact ties. Lower cost is always the last tiebreaker.
     pub tiebreakers: Vec<Goal>,
+    /// On equal scores keep the base build's modules instead of the cheaper fit (improving a
+    /// player's build: without it ties silently downgrade modules the objective ignores).
+    pub keep_base: bool,
     pub constraints: Vec<Constraint>,
     /// Slots kept exactly as in `base`.
     pub lock: Vec<SlotRef>,
@@ -142,10 +150,11 @@ impl Request {
             base,
             objective,
             tiebreakers: Vec::new(),
+            keep_base: false,
             constraints: Vec::new(),
             lock: Vec::new(),
             engineering: true,
-            power: PowerCheck::Deployed,
+            power: PowerCheck::Priority,
             require_boost: true,
             extra_groups: Vec::new(),
             filters: Filters::default(),
@@ -287,10 +296,49 @@ impl Rng {
     }
 }
 
+/// Module identity including engineering, so a re-engineered module counts as changed.
+type Signature = (usize, Option<&'static str>, u8, Option<&'static str>);
+
+fn signatures(ship: &Ship) -> Vec<Signature> {
+    std::iter::once(&ship.bulkhead)
+        .chain(ship.all_slots().filter_map(|s| s.module.as_ref()))
+        .map(|m| {
+            let (bp, special) = m.engineering();
+            (
+                std::ptr::from_ref(m.def) as usize,
+                bp.map(|b| b.0),
+                bp.map_or(0, |b| b.1),
+                special,
+            )
+        })
+        .collect()
+}
+
+/// Number of the base build's modules still fitted (moving a module between slots keeps it).
+fn kept_modules(base: &[Signature], ship: &Ship) -> f64 {
+    let mut left: HashMap<Signature, usize> = HashMap::new();
+    for s in base {
+        *left.entry(*s).or_default() += 1;
+    }
+    let mut kept = 0;
+    for s in signatures(ship) {
+        if let Some(n) = left.get_mut(&s).filter(|n| **n > 0) {
+            *n -= 1;
+            kept += 1;
+        }
+    }
+    f64::from(kept)
+}
+
 struct Searcher<'a> {
     req: &'a Request,
     ctx: &'a MetricContext,
+    /// Objective and tiebreakers (without the cost tiebreak).
     goals: Vec<Goal>,
+    /// The base build's module signatures when ties should keep them.
+    keep: Option<Vec<Signature>>,
+    /// Cheaper fit as the final tiebreak, unless a goal is already about cost.
+    cost: Option<Goal>,
     budget: Budget,
     groups: HashSet<&'static str>,
     locked: HashSet<SlotRef>,
@@ -310,17 +358,15 @@ impl<'a> Searcher<'a> {
     fn new(req: &'a Request, ctx: &'a MetricContext) -> Self {
         let mut goals = vec![req.objective];
         goals.extend(req.tiebreakers.iter().copied());
-        let cost: Metric = "totalCost".parse().expect("totalCost is a built-in metric");
-        if !goals.iter().any(|g| g.metric.name() == "totalCost") {
-            goals.push(Goal {
-                metric: cost,
-                direction: Direction::Min,
-            });
-        }
+        let cost_metric: Metric = "totalCost".parse().expect("totalCost is a built-in metric");
+        let cost = (!goals.iter().any(|g| g.metric.name() == "totalCost")).then_some(Goal {
+            metric: cost_metric,
+            direction: Direction::Min,
+        });
         // Only groups that can push a requested metric the wanted way are searched: a module that
         // contributes nothing can only add mass, power draw and cost.
         let mut groups: HashSet<&'static str> = req.extra_groups.iter().copied().collect();
-        for g in &goals {
+        for g in goals.iter().chain(&cost) {
             groups.extend(g.metric.groups());
         }
         for c in &req.constraints {
@@ -331,6 +377,8 @@ impl<'a> Searcher<'a> {
         Self {
             req,
             ctx,
+            keep: req.keep_base.then(|| signatures(&req.base)),
+            cost,
             goals,
             budget: req.effort.budget(),
             groups,
@@ -358,23 +406,35 @@ impl<'a> Searcher<'a> {
         let s = &ship.stats;
         let mut h = Hard::default();
         let mut why = Vec::new();
-        let draw = match self.req.power {
-            PowerCheck::Deployed => Some(s.power_deployed),
-            PowerCheck::Retracted => Some(s.power_retracted),
-            PowerCheck::Ignore => None,
-        };
-        if let Some(draw) = draw.filter(|d| *d > s.power_available + EPS) {
-            h.power = (draw - s.power_available) / s.power_available.max(1.0);
+        let budget = s.power_available.max(1.0);
+        let mut over = |draw: f64, what: &str| {
+            if draw <= s.power_available + EPS {
+                return;
+            }
+            h.power += (draw - s.power_available) / budget;
             why.push(format!(
-                "power draw {draw:.2} MW exceeds the power plant's {:.2} MW",
+                "{what} {draw:.2} MW exceeds power plant {:.2} MW",
                 s.power_available
             ));
+        };
+        match self.req.power {
+            PowerCheck::Priority => {
+                // The game sheds the lowest priority groups first: non-combat modules may go dark.
+                over(
+                    combat_deployed_draw(ship),
+                    "combat draw with hardpoints deployed",
+                );
+                over(s.power_retracted, "draw with hardpoints retracted");
+            }
+            PowerCheck::Deployed => over(s.power_deployed, "draw with hardpoints deployed"),
+            PowerCheck::Retracted => over(s.power_retracted, "draw with hardpoints retracted"),
+            PowerCheck::Ignore => {}
         }
         let max_mass = num(ship.thrusters().and_then(|t| t.r().max_mass));
         if s.laden_mass >= max_mass {
             h.thrust = (s.laden_mass - max_mass) / max_mass.max(1.0) + 0.01;
             why.push(format!(
-                "laden mass {:.1} t exceeds the thrusters' max mass {max_mass:.1} t",
+                "laden mass {:.1} t exceeds thruster max mass {max_mass:.1} t",
                 s.laden_mass
             ));
         }
@@ -404,17 +464,11 @@ impl<'a> Searcher<'a> {
             }
             if let Some(min) = c.min.filter(|m| x < m - EPS) {
                 v += (min - x) / min.abs().max(1.0);
-                why.push(format!(
-                    "{} = {x:.2} is below the required {min}",
-                    c.metric.name()
-                ));
+                why.push(format!("{} = {x:.2} < required min {min}", c.metric.name()));
             }
             if let Some(max) = c.max.filter(|m| x > m + EPS) {
                 v += (x - max) / max.abs().max(1.0);
-                why.push(format!(
-                    "{} = {x:.2} is above the allowed {max}",
-                    c.metric.name()
-                ));
+                why.push(format!("{} = {x:.2} > allowed max {max}", c.metric.name()));
             }
         }
         (v, why)
@@ -424,12 +478,18 @@ impl<'a> Searcher<'a> {
         self.evaluations += 1;
         let (hard, _) = self.hard(ship);
         let (soft, _) = self.soft(ship);
-        let values = self
+        let finite = |v: f64| if v.is_finite() { v } else { -1e12 };
+        let mut values: Vec<f64> = self
             .goals
             .iter()
-            .map(|g| g.sign() * g.metric.compute(ship, self.ctx))
-            .map(|v| if v.is_finite() { v } else { -1e12 })
+            .map(|g| finite(g.sign() * g.metric.compute(ship, self.ctx)))
             .collect();
+        if let Some(base) = &self.keep {
+            values.push(kept_modules(base, ship));
+        }
+        if let Some(cost) = &self.cost {
+            values.push(finite(cost.sign() * cost.metric.compute(ship, self.ctx)));
+        }
         Trial {
             score: Score {
                 violation: hard.total() + soft,
@@ -912,6 +972,26 @@ impl<'a> Searcher<'a> {
             locals.push((ship, score));
         }
 
+        // Arrange like a player would: priority groups for power, small modules in small slots.
+        // Neither may change the score; if one ever did, keep the unarranged build.
+        let locked = self.locked.clone();
+        let locals: Vec<(Ship, Score)> = locals
+            .into_iter()
+            .map(|(ship, score)| {
+                let before = self.evaluate(&ship).score;
+                let mut arranged = ship.clone();
+                if self.req.power == PowerCheck::Priority {
+                    assign_priorities(&mut arranged);
+                }
+                tidy_internal_slots(&mut arranged, |r| locked.contains(&r));
+                if self.evaluate(&arranged).score.compare(&before) == Ordering::Equal {
+                    (arranged, score)
+                } else {
+                    (ship, score)
+                }
+            })
+            .collect();
+
         // Canonicalise through the Coriolis code so reported numbers match coriolis.io exactly.
         let mut ranked: Vec<(Ship, Score)> = locals
             .into_iter()
@@ -930,10 +1010,14 @@ impl<'a> Searcher<'a> {
         let (hard, mut violations) = self.hard(&best);
         let (soft, soft_why) = self.soft(&best);
         violations.extend(soft_why);
+        // Defence in depth: anything Coriolis itself would not let you fit is reported, never hidden.
+        let illegal = validate(&best);
+        let legal = illegal.is_empty();
+        violations.extend(illegal.into_iter().map(|p| format!("illegal: {p}")));
         let mut searched_groups: Vec<&'static str> = self.groups.iter().copied().collect();
         searched_groups.sort_unstable();
         Outcome {
-            feasible: hard.total() + soft <= EPS,
+            feasible: hard.total() + soft <= EPS && legal,
             violations,
             ship: best,
             score,

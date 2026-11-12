@@ -70,6 +70,40 @@ impl SlotRef {
         }
     }
 
+    /// The slot kind as lock rules name it: `bulkheads`, `standard`, `hardpoint`, `utility`,
+    /// `internal`.
+    pub fn kind_name(&self, ship: &Ship) -> &'static str {
+        match *self {
+            SlotRef::Bulkheads => "bulkheads",
+            SlotRef::Standard(_) => "standard",
+            SlotRef::Internal(_) => "internal",
+            SlotRef::Hardpoint(i) => {
+                if ship.hardpoints[i].kind == SlotKind::Utility {
+                    "utility"
+                } else {
+                    "hardpoint"
+                }
+            }
+        }
+    }
+
+    /// Whether a lock rule covers this slot: its key (`internal:3`), its kind (`hardpoint`), or for
+    /// standard slots its group (`fsd`).
+    pub fn matches_lock(&self, ship: &Ship, rule: &str) -> bool {
+        let key = self.key(ship);
+        rule == key
+            || rule == self.kind_name(ship)
+            || (matches!(self, SlotRef::Standard(_)) && key.strip_prefix("standard:") == Some(rule))
+    }
+
+    /// Every slot covered by any of the lock rules.
+    pub fn locked_by(ship: &Ship, rules: &[impl AsRef<str>]) -> Vec<SlotRef> {
+        SlotRef::all(ship)
+            .into_iter()
+            .filter(|r| rules.iter().any(|rule| r.matches_lock(ship, rule.as_ref())))
+            .collect()
+    }
+
     /// Inverse of [`SlotRef::key`].
     pub fn parse(ship: &Ship, key: &str) -> Option<SlotRef> {
         SlotRef::all(ship).into_iter().find(|r| r.key(ship) == key)
