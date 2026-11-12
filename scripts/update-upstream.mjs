@@ -164,7 +164,7 @@ if (anyNew && !checkOnly) {
   }
   if (failed && !keep) {
     for (const dir of SUBMODULES) git(dir, 'checkout', '--quiet', old[dir]);
-    sh('git', ['checkout', '--quiet', '--', 'crates/corai-engine/tests/fixtures', 'crates/corai-opt/tests/fixtures']);
+    sh('git', ['checkout', '--quiet', '--', 'crates/corai-engine/tests/fixtures', 'crates/corai-opt/tests/fixtures', 'crates/corai-service/tests/fixtures']);
     sh('node', ['scripts/build.mjs']);
     say('- Rolled back to the previous Coriolis commits (use --keep to keep the update).');
   }

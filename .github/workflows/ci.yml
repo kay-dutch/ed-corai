@@ -28,7 +28,7 @@ jobs:
       - name: Test
         run: npm test
 
-  rust:
+  rust-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -42,5 +42,35 @@ jobs:
         run: cargo fmt --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  # Releases ship Windows and macOS binaries; Linux runs the same tests as a free extra check.
+  rust:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    env:
+      CORAI_UPDATE_CHECK: "0"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Test
         run: cargo test --workspace --locked
+      - name: Build the MCP server
+        run: cargo build --locked -p ed-corai-cli
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The Node end-to-end tests speak MCP to the Rust server exactly as Claude does.
+      - name: End-to-end tests against the Rust server
+        shell: bash
+        run: |
+          exe=target/debug/ed-corai-cli
+          if [ "$RUNNER_OS" = "Windows" ]; then exe="$exe.exe"; fi
+          CORAI_SERVER="$PWD/$exe" node --test test/server.test.mjs

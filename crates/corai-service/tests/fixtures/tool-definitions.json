@@ -1,0 +1,1071 @@
+{
+ "instructions": "Elite Dangerous ship-build optimiser built on the Coriolis (coriolis.io) calculation engine and data.\nEvery number comes from the engine and documented game mechanics, never from community tier lists. Workflow:\n1. Translate the user's goal into ONE objective metric plus hard constraints (list_metrics shows them).\n   E.g. \"best exploration Krait\" -> objective unladenRange, constraints count:fs>=1, count:am>=1, count:pv>=1.\n   \"Tanky PvE FdL\" -> objective totalEHP with constraint dpsVsHull>=X; \"max cargo T-9 that can still jump 20 Ly laden\" -> cargoCapacity, ladenRange>=20.\n2. Required modules are constraints on count:<group> (list_module_groups gives group codes: fs fuel scoop, am AFMU, pv SRV hangar,\n   fh fighter hangar, dc docking computer, hs heat sink, rf refinery, cc collector limpets, ml mining laser, ...).\n3. Use compare_ships to rank hulls (effort quick, sizes to restrict), then optimize_build on the best few with effort normal/thorough.\n4. Improving a player's build (pass it as \"build\"):\n   - Lock every slot the request does not touch (lock: [\"hardpoint\", \"standard:fsd\", \"internal:3\", ...]).\n   - Turn what the build already achieves into constraints (current shieldEHP, hullEHP, sustainedDps, unladenRange, ...\n     as minimums) so the result is never worse where the player did not ask for a trade.\n   - Ties keep the player's modules (keepBase), but a metric that genuinely improves will still swap modules:\n     check the changed slots and explain each one.\n5. Keep builds playable: one weapon type and mount type where possible (weaponTypes, mountTypes), a real fuel tank,\n   no large fuel scoop on combat ships, required utility modules as count: constraints.\n6. Ask how the player flies when it matters and set context: sysPips/wepPips while fighting (default 2/4),\n   recoverySysPips (default 4), damagePreset pve for NPC combat, incomingDps, rangeMeters, opponent.\n7. Present the Coriolis and EDSY links and explain trade-offs with the numbers. Users may paste builds from Coriolis,\n   EDSY (SLEF export or import link), Inara or their journal; export_build gives SLEF / journal JSON.\n8. Explore trade-offs by re-running with tightened constraints (epsilon-constraint method) rather than inventing weights.\nAssumptions (say so when a result depends on them, and offer a rerun with another value): the pve damage mix,\nregenUnderFire=0, thermalVentFactor=1 (Thermal Vent heat removal is unmeasured), Corrosive Shell 1.25x hull damage and\n+20 piercing (community figures), engineering at best roll.\nEngineering defaults to grade 5 best-roll blueprints plus the best experimental effect per module (\"engineering\":\"none\" for stock).\nGuardian modules cannot be engineered; life support, sensors and SCO FSDs keep their slot size; all modules count as obtainable.\nSearched module groups are limited to those that can affect the requested metrics; use extraGroups or count:<group> constraints to bring others in.\nOptimisation is a heuristic local search: very good but not a proof of global optimality; higher effort = more restarts.\nWhen the user asks about updates, use check_for_updates; install_update only after the user agrees.",
+ "tools": [
+  {
+   "name": "list_ships",
+   "title": "List ships",
+   "description": "All ships with id, size class (1 small - 3 large), price, base speed/boost, mass, masslock and slot layout.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "ship_details",
+   "title": "Ship details",
+   "description": "Slot keys/sizes/restrictions of a ship plus its full stock (or given) build summary. Slot keys are what lock/changes refer to.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ship": {
+      "type": "string"
+     },
+     "build": {
+      "description": "A build in any common form: Coriolis outfit or import link, EDSY import link, SLEF JSON (EDSY: Export → SLEF), or a journal Loadout event.",
+      "type": "string"
+     },
+     "context": {
+      "type": "object",
+      "properties": {
+       "sysPips": {
+        "description": "SYS pips while fighting: shield resistance, regen under fire (default 2)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "wepPips": {
+        "description": "WEP pips while fighting: weapon capacitor sustain (default 4)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "recoverySysPips": {
+        "description": "SYS pips while recovering: shield recharge and rebuild times (default 4)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "damage": {
+        "description": "Incoming damage mix for effective-HP metrics (relative weights; default equal kinetic/thermal/explosive)",
+        "type": "object",
+        "properties": {
+         "kinetic": {
+          "type": "number",
+          "minimum": 0
+         },
+         "thermal": {
+          "type": "number",
+          "minimum": 0
+         },
+         "explosive": {
+          "type": "number",
+          "minimum": 0
+         },
+         "absolute": {
+          "type": "number",
+          "minimum": 0
+         }
+        }
+       },
+       "opponent": {
+        "description": "Reference target for dpsVsShields/dpsVsHull: ship id (stock) or any build (link, SLEF). Default stock Anaconda",
+        "type": "string"
+       },
+       "opponentSysPips": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "rangeMeters": {
+        "description": "Engagement range for falloff (default 1000)",
+        "type": "number",
+        "minimum": 0
+       },
+       "incomingDps": {
+        "description": "Raw incoming DPS for shieldTimeUnderFire (default 200)",
+        "type": "number",
+        "minimum": 0
+       },
+       "damagePreset": {
+        "description": "Named damage mix: even (default) or pve (thermal-heavy NPC fire: K 0.30 / T 0.60 / E 0.05 / Abs 0.05, an assumption). Explicit damage weights override it.",
+        "type": "string",
+        "enum": [
+         "even",
+         "pve"
+        ]
+       },
+       "regenUnderFire": {
+        "description": "Share of time shields regenerate while taking fire (default 0; the in-game pause after a hit is unmeasured)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+       },
+       "ventHitRate": {
+        "description": "Share of time Thermal Vent beams are on target (default 1)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+       },
+       "thermalVentFactor": {
+        "description": "Heat a hitting Thermal Vent beam removes, as a multiple of its own thermal load (default 1; unmeasured)",
+        "type": "number",
+        "minimum": 0
+       },
+       "corrosiveHullMultiplier": {
+        "description": "Hull damage multiplier while a Corrosive Shell weapon keeps hitting (default 1.25; community figure, does not stack)",
+        "type": "number",
+        "minimum": 1
+       },
+       "corrosivePiercingBonus": {
+        "description": "Armour piercing added to the Corrosive Shell weapon itself (default 20; community figure)",
+        "type": "number",
+        "minimum": 0
+       },
+       "reserveFuelInJumpMass": {
+        "description": "Count the reserve tank in jump mass like Coriolis (default false, matching the journal MaxJumpRange)",
+        "type": "boolean"
+       }
+      }
+     }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "list_module_groups",
+   "title": "List module groups",
+   "description": "Module group codes (used in count:<group> metrics, extraGroups, filters) with names and categories.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "category": {
+      "type": "string",
+      "enum": [
+       "standard",
+       "hardpoint",
+       "utility",
+       "internal"
+      ]
+     }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "module_info",
+   "title": "Module info",
+   "description": "Stock stats of every module in a group (optionally one class) and the blueprints / experimental effects that apply to it, with grade-5 feature ranges.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "group": {
+      "type": "string"
+     },
+     "class": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+     }
+    },
+    "required": [
+     "group"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "list_metrics",
+   "title": "List metrics",
+   "description": "Every metric usable as objective/constraint, with unit and meaning. Also: count:<group> and class:<group>.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "evaluate_build",
+   "title": "Evaluate build",
+   "description": "Full stats of a build (Coriolis URL or stock ship), optionally after applying slot changes. Use for what-if comparisons; returns a new Coriolis URL.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ship": {
+      "type": "string"
+     },
+     "build": {
+      "description": "A build in any common form: Coriolis outfit or import link, EDSY import link, SLEF JSON (EDSY: Export → SLEF), or a journal Loadout event.",
+      "type": "string"
+     },
+     "changes": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "slot": {
+         "type": "string",
+         "description": "Slot key from ship_details, e.g. internal:3, hardpoint:1, utility:2, standard:fsd, bulkheads"
+        },
+        "empty": {
+         "description": "Remove the module",
+         "type": "boolean"
+        },
+        "moduleId": {
+         "description": "Exact module id (from module_info)",
+         "type": "string"
+        },
+        "group": {
+         "type": "string"
+        },
+        "class": {
+         "type": "integer",
+         "minimum": -9007199254740991,
+         "maximum": 9007199254740991
+        },
+        "rating": {
+         "type": "string"
+        },
+        "mount": {
+         "type": "string",
+         "enum": [
+          "F",
+          "G",
+          "T"
+         ]
+        },
+        "bulkheadIndex": {
+         "type": "integer",
+         "minimum": -9007199254740991,
+         "maximum": 9007199254740991
+        },
+        "blueprint": {
+         "description": "Blueprint key, e.g. FSD_LongRange (module_info lists them)",
+         "type": "string"
+        },
+        "grade": {
+         "description": "Default: highest grade",
+         "type": "integer",
+         "minimum": -9007199254740991,
+         "maximum": 9007199254740991
+        },
+        "special": {
+         "description": "Experimental key, e.g. special_fsd_heavy",
+         "type": "string"
+        }
+       },
+       "required": [
+        "slot"
+       ]
+      }
+     },
+     "context": {
+      "type": "object",
+      "properties": {
+       "sysPips": {
+        "description": "SYS pips while fighting: shield resistance, regen under fire (default 2)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "wepPips": {
+        "description": "WEP pips while fighting: weapon capacitor sustain (default 4)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "recoverySysPips": {
+        "description": "SYS pips while recovering: shield recharge and rebuild times (default 4)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "damage": {
+        "description": "Incoming damage mix for effective-HP metrics (relative weights; default equal kinetic/thermal/explosive)",
+        "type": "object",
+        "properties": {
+         "kinetic": {
+          "type": "number",
+          "minimum": 0
+         },
+         "thermal": {
+          "type": "number",
+          "minimum": 0
+         },
+         "explosive": {
+          "type": "number",
+          "minimum": 0
+         },
+         "absolute": {
+          "type": "number",
+          "minimum": 0
+         }
+        }
+       },
+       "opponent": {
+        "description": "Reference target for dpsVsShields/dpsVsHull: ship id (stock) or any build (link, SLEF). Default stock Anaconda",
+        "type": "string"
+       },
+       "opponentSysPips": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "rangeMeters": {
+        "description": "Engagement range for falloff (default 1000)",
+        "type": "number",
+        "minimum": 0
+       },
+       "incomingDps": {
+        "description": "Raw incoming DPS for shieldTimeUnderFire (default 200)",
+        "type": "number",
+        "minimum": 0
+       },
+       "damagePreset": {
+        "description": "Named damage mix: even (default) or pve (thermal-heavy NPC fire: K 0.30 / T 0.60 / E 0.05 / Abs 0.05, an assumption). Explicit damage weights override it.",
+        "type": "string",
+        "enum": [
+         "even",
+         "pve"
+        ]
+       },
+       "regenUnderFire": {
+        "description": "Share of time shields regenerate while taking fire (default 0; the in-game pause after a hit is unmeasured)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+       },
+       "ventHitRate": {
+        "description": "Share of time Thermal Vent beams are on target (default 1)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+       },
+       "thermalVentFactor": {
+        "description": "Heat a hitting Thermal Vent beam removes, as a multiple of its own thermal load (default 1; unmeasured)",
+        "type": "number",
+        "minimum": 0
+       },
+       "corrosiveHullMultiplier": {
+        "description": "Hull damage multiplier while a Corrosive Shell weapon keeps hitting (default 1.25; community figure, does not stack)",
+        "type": "number",
+        "minimum": 1
+       },
+       "corrosivePiercingBonus": {
+        "description": "Armour piercing added to the Corrosive Shell weapon itself (default 20; community figure)",
+        "type": "number",
+        "minimum": 0
+       },
+       "reserveFuelInJumpMass": {
+        "description": "Count the reserve tank in jump mass like Coriolis (default false, matching the journal MaxJumpRange)",
+        "type": "boolean"
+       }
+      }
+     }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "export_build",
+   "title": "Export build",
+   "description": "A build as SLEF (EDCD Ship Loadout Exchange Format, accepted by EDSY, Coriolis, Inara, EDDiscovery) or as a Frontier journal Loadout event, plus Coriolis and EDSY links.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ship": {
+      "type": "string"
+     },
+     "build": {
+      "description": "A build in any common form: Coriolis outfit or import link, EDSY import link, SLEF JSON (EDSY: Export → SLEF), or a journal Loadout event.",
+      "type": "string"
+     },
+     "format": {
+      "description": "Default slef",
+      "type": "string",
+      "enum": [
+       "slef",
+       "loadout"
+      ]
+     },
+     "name": {
+      "description": "Build name to embed",
+      "type": "string"
+     }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "optimize_build",
+   "title": "Optimise build",
+   "description": "Search for the outfitting of one ship that maximises/minimises an objective metric subject to constraints, using the Coriolis engine for every evaluation. Starts from stock or a given build; lock keeps slots unchanged.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ship": {
+      "description": "Ship id or name",
+      "type": "string"
+     },
+     "build": {
+      "description": "A build in any common form: Coriolis outfit or import link, EDSY import link, SLEF JSON (EDSY: Export → SLEF), or a journal Loadout event. Optimisation starts from it; locked slots keep its modules.",
+      "type": "string"
+     },
+     "lock": {
+      "description": "Slot keys or kinds to keep: e.g. [\"hardpoint\",\"utility:1\",\"standard:fsd\"]",
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "keepBase": {
+      "description": "On equal scores keep the starting build's modules instead of the cheaper fit (default true when build is given)",
+      "type": "boolean"
+     },
+     "timeLimitSeconds": {
+      "description": "Default 60",
+      "type": "number",
+      "exclusiveMinimum": 0
+     },
+     "objective": {
+      "type": "object",
+      "properties": {
+       "metric": {
+        "type": "string",
+        "description": "Metric name from list_metrics, or count:<group> / class:<group>"
+       },
+       "direction": {
+        "description": "Defaults to the metric's natural direction",
+        "type": "string",
+        "enum": [
+         "max",
+         "min"
+        ]
+       }
+      },
+      "required": [
+       "metric"
+      ]
+     },
+     "tiebreakers": {
+      "description": "Secondary goals used only to break exact ties",
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "metric": {
+         "type": "string",
+         "description": "Metric name from list_metrics, or count:<group> / class:<group>"
+        },
+        "direction": {
+         "description": "Defaults to the metric's natural direction",
+         "type": "string",
+         "enum": [
+          "max",
+          "min"
+         ]
+        }
+       },
+       "required": [
+        "metric"
+       ]
+      }
+     },
+     "constraints": {
+      "description": "Hard bounds, e.g. {metric:\"ladenRange\",min:20}, {metric:\"count:fs\",min:1}",
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "metric": {
+         "type": "string"
+        },
+        "min": {
+         "type": "number"
+        },
+        "max": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "metric"
+       ]
+      }
+     },
+     "engineering": {
+      "description": "full = G5 max roll + best experimental (default); none = stock modules",
+      "type": "string",
+      "enum": [
+       "full",
+       "none"
+      ]
+     },
+     "power": {
+      "description": "Power budget check. priority (default): combat modules powered with hardpoints out, non-combat ones (scoop, docking computer, SRV bay, ...) shed by priority as in game, everything powered with hardpoints retracted. deployed: everything on with hardpoints out.",
+      "type": "string",
+      "enum": [
+       "priority",
+       "deployed",
+       "retracted",
+       "ignore"
+      ]
+     },
+     "requireBoost": {
+      "description": "Distributor must be able to boost (default true)",
+      "type": "boolean"
+     },
+     "extraGroups": {
+      "description": "Extra module groups to consider even if no metric needs them",
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "filters": {
+      "type": "object",
+      "properties": {
+       "allowPowerplay": {
+        "type": "boolean"
+       },
+       "allowPreEngineered": {
+        "type": "boolean"
+       },
+       "allowCommunityGoal": {
+        "type": "boolean"
+       },
+       "allowGuardian": {
+        "type": "boolean"
+       },
+       "allowExperimental": {
+        "description": "AX/Guardian experimental weapons (max 4 per ship)",
+        "type": "boolean"
+       },
+       "excludeGroups": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       },
+       "excludeModules": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       }
+      }
+     },
+     "context": {
+      "type": "object",
+      "properties": {
+       "sysPips": {
+        "description": "SYS pips while fighting: shield resistance, regen under fire (default 2)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "wepPips": {
+        "description": "WEP pips while fighting: weapon capacitor sustain (default 4)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "recoverySysPips": {
+        "description": "SYS pips while recovering: shield recharge and rebuild times (default 4)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "damage": {
+        "description": "Incoming damage mix for effective-HP metrics (relative weights; default equal kinetic/thermal/explosive)",
+        "type": "object",
+        "properties": {
+         "kinetic": {
+          "type": "number",
+          "minimum": 0
+         },
+         "thermal": {
+          "type": "number",
+          "minimum": 0
+         },
+         "explosive": {
+          "type": "number",
+          "minimum": 0
+         },
+         "absolute": {
+          "type": "number",
+          "minimum": 0
+         }
+        }
+       },
+       "opponent": {
+        "description": "Reference target for dpsVsShields/dpsVsHull: ship id (stock) or any build (link, SLEF). Default stock Anaconda",
+        "type": "string"
+       },
+       "opponentSysPips": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "rangeMeters": {
+        "description": "Engagement range for falloff (default 1000)",
+        "type": "number",
+        "minimum": 0
+       },
+       "incomingDps": {
+        "description": "Raw incoming DPS for shieldTimeUnderFire (default 200)",
+        "type": "number",
+        "minimum": 0
+       },
+       "damagePreset": {
+        "description": "Named damage mix: even (default) or pve (thermal-heavy NPC fire: K 0.30 / T 0.60 / E 0.05 / Abs 0.05, an assumption). Explicit damage weights override it.",
+        "type": "string",
+        "enum": [
+         "even",
+         "pve"
+        ]
+       },
+       "regenUnderFire": {
+        "description": "Share of time shields regenerate while taking fire (default 0; the in-game pause after a hit is unmeasured)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+       },
+       "ventHitRate": {
+        "description": "Share of time Thermal Vent beams are on target (default 1)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+       },
+       "thermalVentFactor": {
+        "description": "Heat a hitting Thermal Vent beam removes, as a multiple of its own thermal load (default 1; unmeasured)",
+        "type": "number",
+        "minimum": 0
+       },
+       "corrosiveHullMultiplier": {
+        "description": "Hull damage multiplier while a Corrosive Shell weapon keeps hitting (default 1.25; community figure, does not stack)",
+        "type": "number",
+        "minimum": 1
+       },
+       "corrosivePiercingBonus": {
+        "description": "Armour piercing added to the Corrosive Shell weapon itself (default 20; community figure)",
+        "type": "number",
+        "minimum": 0
+       },
+       "reserveFuelInJumpMass": {
+        "description": "Count the reserve tank in jump mass like Coriolis (default false, matching the journal MaxJumpRange)",
+        "type": "boolean"
+       }
+      }
+     },
+     "effort": {
+      "type": "string",
+      "enum": [
+       "quick",
+       "normal",
+       "thorough"
+      ]
+     },
+     "seed": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+     }
+    },
+    "required": [
+     "objective"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "compare_ships",
+   "title": "Compare ships",
+   "description": "Run the optimiser on many hulls with the same objective/constraints and rank them. Default: all ships, effort quick. Use to answer \"which ship is best for X\".",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ships": {
+      "description": "Ship ids/names; default all",
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "sizes": {
+      "description": "Restrict to ship size classes (1 small, 2 medium, 3 large)",
+      "type": "array",
+      "items": {
+       "type": "integer",
+       "minimum": 1,
+       "maximum": 3
+      }
+     },
+     "maxHullCost": {
+      "type": "number"
+     },
+     "top": {
+      "description": "Rows to return (default 10)",
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+     },
+     "timeLimitSeconds": {
+      "description": "Total budget (default 240)",
+      "type": "number",
+      "exclusiveMinimum": 0
+     },
+     "objective": {
+      "type": "object",
+      "properties": {
+       "metric": {
+        "type": "string",
+        "description": "Metric name from list_metrics, or count:<group> / class:<group>"
+       },
+       "direction": {
+        "description": "Defaults to the metric's natural direction",
+        "type": "string",
+        "enum": [
+         "max",
+         "min"
+        ]
+       }
+      },
+      "required": [
+       "metric"
+      ]
+     },
+     "tiebreakers": {
+      "description": "Secondary goals used only to break exact ties",
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "metric": {
+         "type": "string",
+         "description": "Metric name from list_metrics, or count:<group> / class:<group>"
+        },
+        "direction": {
+         "description": "Defaults to the metric's natural direction",
+         "type": "string",
+         "enum": [
+          "max",
+          "min"
+         ]
+        }
+       },
+       "required": [
+        "metric"
+       ]
+      }
+     },
+     "constraints": {
+      "description": "Hard bounds, e.g. {metric:\"ladenRange\",min:20}, {metric:\"count:fs\",min:1}",
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "metric": {
+         "type": "string"
+        },
+        "min": {
+         "type": "number"
+        },
+        "max": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "metric"
+       ]
+      }
+     },
+     "engineering": {
+      "description": "full = G5 max roll + best experimental (default); none = stock modules",
+      "type": "string",
+      "enum": [
+       "full",
+       "none"
+      ]
+     },
+     "power": {
+      "description": "Power budget check. priority (default): combat modules powered with hardpoints out, non-combat ones (scoop, docking computer, SRV bay, ...) shed by priority as in game, everything powered with hardpoints retracted. deployed: everything on with hardpoints out.",
+      "type": "string",
+      "enum": [
+       "priority",
+       "deployed",
+       "retracted",
+       "ignore"
+      ]
+     },
+     "requireBoost": {
+      "description": "Distributor must be able to boost (default true)",
+      "type": "boolean"
+     },
+     "extraGroups": {
+      "description": "Extra module groups to consider even if no metric needs them",
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "filters": {
+      "type": "object",
+      "properties": {
+       "allowPowerplay": {
+        "type": "boolean"
+       },
+       "allowPreEngineered": {
+        "type": "boolean"
+       },
+       "allowCommunityGoal": {
+        "type": "boolean"
+       },
+       "allowGuardian": {
+        "type": "boolean"
+       },
+       "allowExperimental": {
+        "description": "AX/Guardian experimental weapons (max 4 per ship)",
+        "type": "boolean"
+       },
+       "excludeGroups": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       },
+       "excludeModules": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       }
+      }
+     },
+     "context": {
+      "type": "object",
+      "properties": {
+       "sysPips": {
+        "description": "SYS pips while fighting: shield resistance, regen under fire (default 2)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "wepPips": {
+        "description": "WEP pips while fighting: weapon capacitor sustain (default 4)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "recoverySysPips": {
+        "description": "SYS pips while recovering: shield recharge and rebuild times (default 4)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "damage": {
+        "description": "Incoming damage mix for effective-HP metrics (relative weights; default equal kinetic/thermal/explosive)",
+        "type": "object",
+        "properties": {
+         "kinetic": {
+          "type": "number",
+          "minimum": 0
+         },
+         "thermal": {
+          "type": "number",
+          "minimum": 0
+         },
+         "explosive": {
+          "type": "number",
+          "minimum": 0
+         },
+         "absolute": {
+          "type": "number",
+          "minimum": 0
+         }
+        }
+       },
+       "opponent": {
+        "description": "Reference target for dpsVsShields/dpsVsHull: ship id (stock) or any build (link, SLEF). Default stock Anaconda",
+        "type": "string"
+       },
+       "opponentSysPips": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4
+       },
+       "rangeMeters": {
+        "description": "Engagement range for falloff (default 1000)",
+        "type": "number",
+        "minimum": 0
+       },
+       "incomingDps": {
+        "description": "Raw incoming DPS for shieldTimeUnderFire (default 200)",
+        "type": "number",
+        "minimum": 0
+       },
+       "damagePreset": {
+        "description": "Named damage mix: even (default) or pve (thermal-heavy NPC fire: K 0.30 / T 0.60 / E 0.05 / Abs 0.05, an assumption). Explicit damage weights override it.",
+        "type": "string",
+        "enum": [
+         "even",
+         "pve"
+        ]
+       },
+       "regenUnderFire": {
+        "description": "Share of time shields regenerate while taking fire (default 0; the in-game pause after a hit is unmeasured)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+       },
+       "ventHitRate": {
+        "description": "Share of time Thermal Vent beams are on target (default 1)",
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+       },
+       "thermalVentFactor": {
+        "description": "Heat a hitting Thermal Vent beam removes, as a multiple of its own thermal load (default 1; unmeasured)",
+        "type": "number",
+        "minimum": 0
+       },
+       "corrosiveHullMultiplier": {
+        "description": "Hull damage multiplier while a Corrosive Shell weapon keeps hitting (default 1.25; community figure, does not stack)",
+        "type": "number",
+        "minimum": 1
+       },
+       "corrosivePiercingBonus": {
+        "description": "Armour piercing added to the Corrosive Shell weapon itself (default 20; community figure)",
+        "type": "number",
+        "minimum": 0
+       },
+       "reserveFuelInJumpMass": {
+        "description": "Count the reserve tank in jump mass like Coriolis (default false, matching the journal MaxJumpRange)",
+        "type": "boolean"
+       }
+      }
+     },
+     "effort": {
+      "type": "string",
+      "enum": [
+       "quick",
+       "normal",
+       "thorough"
+      ]
+     },
+     "seed": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+     }
+    },
+    "required": [
+     "objective"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "check_for_updates",
+   "title": "Check for updates",
+   "description": "Installed corai version, the Coriolis code and data it was built from, and the latest corai release on GitHub with its notes.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "install_update",
+   "title": "Install update",
+   "description": "Updates this ED Corai install (a clean git clone) to a release: fetches the tag, refreshes the Coriolis submodules, installs dependencies and rebuilds. Only call after the user explicitly agreed. The MCP server must be restarted afterwards (Claude Code: /mcp, Claude Desktop: restart the app).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "version": {
+      "description": "Release tag, e.g. \"v0.2.0\". Default: the latest release.",
+      "type": "string"
+     },
+     "confirm": {
+      "type": "boolean",
+      "const": true,
+      "description": "Must be true: the user agreed to install the update."
+     }
+    },
+    "required": [
+     "confirm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  }
+ ]
+}

@@ -16,10 +16,12 @@ pub enum SlotRef {
 }
 
 impl SlotRef {
-    /// Every slot of a ship, in Coriolis order (bulkheads, standard, hardpoints, internal).
+    /// Every slot of a ship, in the order the tools list them (standard, bulkheads, hardpoints,
+    /// internal).
     pub fn all(ship: &Ship) -> Vec<SlotRef> {
-        std::iter::once(SlotRef::Bulkheads)
-            .chain((0..ship.standard.len()).map(SlotRef::Standard))
+        (0..ship.standard.len())
+            .map(SlotRef::Standard)
+            .chain(std::iter::once(SlotRef::Bulkheads))
             .chain((0..ship.hardpoints.len()).map(SlotRef::Hardpoint))
             .chain((0..ship.internal.len()).map(SlotRef::Internal))
             .collect()

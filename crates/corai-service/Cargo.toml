@@ -1,0 +1,21 @@
+[package]
+name = "corai-service"
+description = "ED Corai use cases behind the MCP tools: build summaries, slot changes, evaluation, export, optimisation and hull comparison"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+repository.workspace = true
+
+[dependencies]
+corai-data.workspace = true
+corai-engine = { path = "../corai-engine" }
+corai-opt = { path = "../corai-opt" }
+indexmap.workspace = true
+rayon = "1.12.0"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

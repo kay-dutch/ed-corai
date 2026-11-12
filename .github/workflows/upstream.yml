@@ -48,4 +48,5 @@ jobs:
             upstream/coriolis-data
             crates/corai-engine/tests/fixtures
             crates/corai-opt/tests/fixtures
+            crates/corai-service/tests/fixtures
           delete-branch: true

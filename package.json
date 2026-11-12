@@ -8,7 +8,7 @@
     "typecheck": "tsc -p .",
     "test": "npm run build && node --test test/*.test.mjs",
     "start": "node --no-deprecation dist/server.cjs",
-    "oracle": "node scripts/build.mjs oracle oracle-corai oracle-opt && node --no-deprecation dist/oracle.cjs 400 7 > crates/corai-engine/tests/fixtures/oracle.json && node --no-deprecation dist/oracle-corai.cjs && node --no-deprecation dist/oracle-opt.cjs > crates/corai-opt/tests/fixtures/optimize.json",
+    "oracle": "node scripts/build.mjs oracle oracle-corai oracle-opt && node --no-deprecation dist/oracle.cjs 400 7 > crates/corai-engine/tests/fixtures/oracle.json && node --no-deprecation dist/oracle-corai.cjs && node --no-deprecation dist/oracle-opt.cjs > crates/corai-opt/tests/fixtures/optimize.json && node scripts/build.mjs server && node scripts/oracle-tools.mjs",
     "update-upstream": "node scripts/update-upstream.mjs"
   },
   "license": "MIT",

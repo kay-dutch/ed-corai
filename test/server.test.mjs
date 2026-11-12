@@ -17,7 +17,13 @@ const call = async (name, args = {}) => {
 before(async () => {
   client = new Client({ name: 'corai-test', version: '0' });
   // No background release check: tests must not depend on the network.
-  await client.connect(new StdioClientTransport({ command: process.execPath, args: ['--no-deprecation', server], env: { ...process.env, CORAI_UPDATE_CHECK: '0' } }));
+  // CORAI_SERVER=<path to ed-corai-cli> runs the same checks against the Rust server.
+  const rust = process.env.CORAI_SERVER;
+  await client.connect(new StdioClientTransport({
+    command: rust ?? process.execPath,
+    args: rust ? ['mcp'] : ['--no-deprecation', server],
+    env: { ...process.env, CORAI_UPDATE_CHECK: '0' },
+  }));
 });
 
 after(async () => client?.close());

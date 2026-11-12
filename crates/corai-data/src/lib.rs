@@ -16,6 +16,13 @@ pub static DATA: LazyLock<CoriolisData> = LazyLock::new(|| {
         .expect("embedded coriolis-data matches the corai-data schema")
 });
 
+/// The same data set as untyped JSON, for reporting values exactly as the data writes them
+/// (key order, integers vs. decimals).
+pub static RAW: LazyLock<Value> = LazyLock::new(|| {
+    serde_json::from_str(include_str!(concat!(env!("OUT_DIR"), "/coriolis.json")))
+        .expect("embedded coriolis-data is valid JSON")
+});
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct CoriolisData {
     pub ships: IndexMap<String, ShipDef>,
