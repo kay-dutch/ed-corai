@@ -4,16 +4,20 @@
 //! server's). Tools run on blocking worker threads so a long optimisation never stalls the
 //! connection. When a newer release exists, the next tool result carries a one-time notice.
 
+mod activity;
 pub mod update;
 
 use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Instant;
+
+use corai_activity::{Message, Reporter};
 
 use corai_service::dispatch::{CallError, call};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
     InitializeResult, ListToolsResult, PaginatedRequestParams, ServerCapabilities, Tool,
 };
-use rmcp::service::RequestContext;
+use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler, ServiceExt};
 use serde::Deserialize;
 use serde_json::Value;
@@ -42,16 +46,20 @@ fn pretty(v: &Value) -> String {
     String::from_utf8(out).unwrap_or_else(|_| v.to_string())
 }
 
-/// The MCP server state: the pending update notice (shown once).
+/// The MCP server state: the pending update notice (shown once) and the reports to the window.
 #[derive(Debug, Clone, Default)]
 pub struct CoraiServer {
     notice: Arc<Mutex<Option<String>>>,
+    reporter: Arc<Reporter>,
 }
 
 impl CoraiServer {
     /// A server that checks for a newer release in the background unless `check_updates` is false.
     pub fn new(check_updates: bool) -> Self {
         let server = Self::default();
+        server
+            .reporter
+            .keep_announcing(std::time::Duration::from_secs(3));
         if check_updates {
             let notice = Arc::clone(&server.notice);
             std::thread::spawn(move || {
@@ -78,6 +86,15 @@ impl CoraiServer {
 enum ToolFailure {
     Call(CallError),
     Update(String),
+}
+
+impl std::fmt::Display for ToolFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Call(e) => e.fmt(f),
+            Self::Update(e) => f.write_str(e),
+        }
+    }
 }
 
 impl From<CallError> for ToolFailure {
@@ -111,6 +128,19 @@ impl ServerHandler for CoraiServer {
             .with_instructions(DEFINITIONS.instructions.clone())
     }
 
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        if let Some(peer) = context.peer.peer_info() {
+            let client = &peer.client_info;
+            let name = client.title.clone().unwrap_or_else(|| client.name.clone());
+            let reporter = Arc::clone(&self.reporter);
+            // Connecting may wait briefly; keep it off the protocol task.
+            std::thread::spawn(move || {
+                reporter.announce();
+                reporter.set_client(&name);
+            });
+        }
+    }
+
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
@@ -122,7 +152,7 @@ impl ServerHandler for CoraiServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let name = request.name.to_string();
         if !DEFINITIONS.tools.iter().any(|t| t.name == name) {
@@ -134,10 +164,37 @@ impl ServerHandler for CoraiServer {
         let args = request
             .arguments
             .map_or(Value::Object(Default::default()), Value::Object);
+        if let Some(peer) = context.peer.peer_info() {
+            let client = &peer.client_info;
+            self.reporter
+                .set_client(client.title.as_deref().unwrap_or(&client.name));
+        }
         let task = name.clone();
-        let outcome = tokio::task::spawn_blocking(move || run_tool(&task, &args))
-            .await
-            .map_err(|e| McpError::internal_error(format!("tool {name} failed: {e}"), None))?;
+        let reporter = Arc::clone(&self.reporter);
+        let outcome = tokio::task::spawn_blocking(move || {
+            let id = reporter.next_id();
+            reporter.send(&Message::Started {
+                id,
+                tool: task.clone(),
+                detail: activity::describe_call(&args),
+            });
+            let started = Instant::now();
+            let outcome = run_tool(&task, &args);
+            let (detail, link) = match &outcome {
+                Ok(v) => activity::describe_result(&task, v),
+                Err(e) => (e.to_string(), None),
+            };
+            reporter.send(&Message::Finished {
+                id,
+                ok: outcome.is_ok(),
+                millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                detail,
+                link,
+            });
+            outcome
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("tool {name} failed: {e}"), None))?;
         let result = match outcome {
             Ok(v) => {
                 let mut content = vec![ContentBlock::text(pretty(&v))];

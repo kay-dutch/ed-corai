@@ -106,22 +106,24 @@ jobs:
       - name: Build (Windows)
         if: runner.os == 'Windows'
         run: |
-          cargo build --release --locked -p ed-corai-cli
-          mkdir -p out && cp target/release/ed-corai-cli.exe out/
+          cargo build --release --locked -p ed-corai-cli -p ed-corai
+          mkdir -p out && cp target/release/ed-corai-cli.exe target/release/ed-corai.exe out/
 
       - name: Build (macOS universal)
         if: runner.os == 'macOS'
         run: |
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          cargo build --release --locked -p ed-corai-cli --target aarch64-apple-darwin
-          cargo build --release --locked -p ed-corai-cli --target x86_64-apple-darwin
+          cargo build --release --locked -p ed-corai-cli -p ed-corai --target aarch64-apple-darwin
+          cargo build --release --locked -p ed-corai-cli -p ed-corai --target x86_64-apple-darwin
           mkdir -p out
-          lipo -create -output out/ed-corai-cli \
-            target/aarch64-apple-darwin/release/ed-corai-cli \
-            target/x86_64-apple-darwin/release/ed-corai-cli
-          lipo -info out/ed-corai-cli
-          # Ad-hoc signature only (not code signing): macOS refuses unsigned arm64 programs.
-          codesign --force --sign - out/ed-corai-cli
+          for p in ed-corai-cli ed-corai; do
+            lipo -create -output "out/$p" \
+              "target/aarch64-apple-darwin/release/$p" \
+              "target/x86_64-apple-darwin/release/$p"
+            lipo -info "out/$p"
+            # Ad-hoc signature only (not code signing): macOS refuses unsigned arm64 programs.
+            codesign --force --sign - "out/$p"
+          done
 
       - name: Smoke test
         run: |
@@ -129,6 +131,9 @@ jobs:
           "$exe" version
           "$exe" version | grep -q "\"${{ needs.check.outputs.version }}\""
           "$exe" evaluate python > /dev/null
+          # The window needs a display; check it is there and built for this version.
+          w=out/ed-corai; [ "$RUNNER_OS" = Windows ] && w=out/ed-corai.exe
+          test -s "$w"
 
       - name: Package
         run: |

@@ -1,0 +1,16 @@
+[package]
+name = "ed-corai"
+description = "ED Corai desktop window: what the MCP servers are working on"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+repository.workspace = true
+
+[dependencies]
+corai-activity = { path = "../../crates/corai-activity" }
+eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+egui = "0.35"
+
+[lints]
+workspace = true

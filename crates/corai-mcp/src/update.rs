@@ -159,12 +159,21 @@ pub fn asset_name(version: &str) -> Option<String> {
     }
 }
 
-/// File name of the program inside the release zip.
+/// File name of the command-line program (the MCP server) inside the release zip.
 pub fn binary_name() -> &'static str {
     if cfg!(target_os = "windows") {
         "ed-corai-cli.exe"
     } else {
         "ed-corai-cli"
+    }
+}
+
+/// File name of the desktop window inside the release zip (from v0.3.0).
+pub fn window_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "ed-corai.exe"
+    } else {
+        "ed-corai"
     }
 }
 
@@ -292,7 +301,7 @@ pub fn replace_executable(exe: &std::path::Path, program: &[u8]) -> std::io::Res
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
     }
-    if cfg!(windows) {
+    if cfg!(windows) && exe.exists() {
         let old = previous_path(exe);
         let _ = std::fs::remove_file(&old);
         std::fs::rename(exe, &old)?;
@@ -306,11 +315,40 @@ pub fn replace_executable(exe: &std::path::Path, program: &[u8]) -> std::io::Res
     Ok(())
 }
 
-/// Removes the previous program left behind by an update on Windows.
+/// Removes the previous programs left behind by an update on Windows (one still running stays).
 pub fn cleanup_previous() {
     if let Ok(exe) = std::env::current_exe() {
         let _ = std::fs::remove_file(previous_path(&exe));
+        if let Some(dir) = exe.parent() {
+            let _ = std::fs::remove_file(previous_path(&dir.join(window_name())));
+        }
     }
+}
+
+/// Installs the programs from a release zip: the running command-line program `running` (must be
+/// in the zip) and the window next to it (when the zip has one). Both are read from the zip before
+/// either is replaced. Returns the replaced paths.
+///
+/// # Errors
+/// The zip lacks the command-line program or a file cannot be replaced.
+pub fn install_programs(
+    zip_bytes: &[u8],
+    running: &std::path::Path,
+) -> Result<Vec<std::path::PathBuf>, String> {
+    let cli = extract_binary(zip_bytes, binary_name())?;
+    let window = extract_binary(zip_bytes, window_name()).ok();
+    let mut done = Vec::new();
+    let mut put = |path: std::path::PathBuf, program: &[u8]| {
+        replace_executable(&path, program)
+            .map_err(|e| format!("Could not replace {}: {e}", path.display()))?;
+        done.push(path);
+        Ok::<_, String>(())
+    };
+    put(running.to_path_buf(), &cli)?;
+    if let (Some(program), Some(dir)) = (window, running.parent()) {
+        put(dir.join(window_name()), &program)?;
+    }
+    Ok(done)
 }
 
 /// Downloads this platform's program from a release (default: the latest), verifies it against the
@@ -339,17 +377,15 @@ pub fn install_update(tag: Option<&str>) -> Result<Value, String> {
             "The downloaded {asset} does not match its published checksum; nothing was changed."
         ));
     }
-    let program = extract_binary(&zip_bytes, binary_name())?;
     let exe =
         std::env::current_exe().map_err(|e| format!("Cannot locate the running program: {e}"))?;
-    replace_executable(&exe, &program)
-        .map_err(|e| format!("Could not replace {}: {e}", exe.display()))?;
+    let replaced = install_programs(&zip_bytes, &exe)?;
     Ok(json!({
         "installed": summary["tag"],
         "from": env!("CARGO_PKG_VERSION"),
-        "path": exe.display().to_string(),
+        "paths": replaced.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
         "restartRequired": true,
-        "message": format!("ED Corai {version} is installed. Restart the MCP server (Claude Code: /mcp; Claude Desktop: restart the app)."),
+        "message": format!("ED Corai {version} is installed. Restart the MCP server (Claude Code: /mcp; Claude Desktop: restart the app) and the ED Corai window if it is open."),
     }))
 }
 
@@ -386,27 +422,55 @@ mod tests {
     #[test]
     fn extracts_the_program_and_swaps_it_in() {
         use std::io::Write;
-        let mut buf = std::io::Cursor::new(Vec::new());
-        {
+        let zip_of = |files: &[(&str, &[u8])]| {
+            let mut buf = std::io::Cursor::new(Vec::new());
             let mut z = zip::ZipWriter::new(&mut buf);
-            let opts = zip::write::SimpleFileOptions::default();
-            z.start_file("README.md", opts).expect("zip");
-            z.write_all(b"readme").expect("zip");
-            z.start_file(format!("ed-corai/{}", binary_name()), opts)
-                .expect("zip");
-            z.write_all(b"new program").expect("zip");
+            for (name, bytes) in files {
+                z.start_file(*name, zip::write::SimpleFileOptions::default())
+                    .expect("zip");
+                z.write_all(bytes).expect("zip");
+            }
             z.finish().expect("zip");
-        }
-        let program = extract_binary(buf.get_ref(), binary_name()).expect("program found");
-        assert_eq!(program, b"new program");
-        assert!(extract_binary(buf.get_ref(), "nope").is_err());
+            buf.into_inner()
+        };
+        let both = zip_of(&[
+            ("README.md", b"readme"),
+            (&format!("ed-corai/{}", binary_name()), b"new cli"),
+            (window_name(), b"new window"),
+        ]);
+        assert_eq!(
+            extract_binary(&both, binary_name()).expect("found"),
+            b"new cli"
+        );
+        assert!(extract_binary(&both, "nope").is_err());
 
         let dir = std::env::temp_dir().join(format!("corai-update-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
-        let exe = dir.join(binary_name());
-        std::fs::write(&exe, b"old program").expect("write");
-        replace_executable(&exe, &program).expect("replaced");
-        assert_eq!(std::fs::read(&exe).expect("read"), b"new program");
+        let cli = dir.join(binary_name());
+        std::fs::write(&cli, b"old cli").expect("write");
+        // Before v0.3.0 the folder had no window: the update adds it.
+        let replaced = install_programs(&both, &cli).expect("installed");
+        assert_eq!(replaced.len(), 2);
+        assert_eq!(std::fs::read(&cli).expect("read"), b"new cli");
+        assert_eq!(
+            std::fs::read(dir.join(window_name())).expect("read"),
+            b"new window"
+        );
+
+        // A zip without the window (v0.2.0) still updates the command-line program.
+        let cli_only = zip_of(&[(binary_name(), b"newer cli")]);
+        assert_eq!(
+            install_programs(&cli_only, &cli).expect("installed").len(),
+            1
+        );
+        assert_eq!(std::fs::read(&cli).expect("read"), b"newer cli");
+        // Without the command-line program nothing is touched.
+        let window_only = zip_of(&[(window_name(), b"x")]);
+        assert!(install_programs(&window_only, &cli).is_err());
+        assert_eq!(
+            std::fs::read(dir.join(window_name())).expect("read"),
+            b"new window"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
