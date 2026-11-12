@@ -15,10 +15,16 @@ function blueprintOffered(grp: string, name: string): boolean {
   return offered.some((k) => k === name || Modifications.blueprints[k]?.fdname === name || suffix(k) === suffix(name));
 }
 
+/** Modules Coriolis allows once per ship (shield generators of every kind count together). */
+const UNIQUE = [['sg', 'bsg', 'psg'], ['rf'], ['fs'], ['fh'], ['gfsb'], ['dc'], ['ews'], ['mlc']];
+
+const label = (m: any) => `${m.class}${m.rating} ${m.name ?? m.grp}`;
+
 export function validateBuild(ship: Ship): string[] {
   const problems: string[] = [];
   const set = ModuleUtils.forShip(ship.id);
-  const props = shipData(ship.id).properties;
+  // ModuleSet reads ship flags (hangars, cabins) and the ship id (slot-specific rules).
+  const props = { ...shipData(ship.id).properties, id: ship.id };
   for (const ref of listSlots(ship)) {
     const m = ref.slot.m;
     if (!m || ref.kind === 'bulkheads') continue;
@@ -31,15 +37,19 @@ export function validateBuild(ship: Ship): string[] {
       offered = Object.values(set.getHps(props, ref.maxClass, ref.eligible, ref.slot) as Record<string, any[]>).flat();
     }
     if (!offered.some((o) => o.id === m.id && o.grp === m.grp)) {
-      problems.push(`${ref.key}: ${m.class}${m.rating} ${m.name ?? m.grp} is not offered by Coriolis for this slot`);
+      problems.push(`${ref.key}: ${label(m)} is not offered by Coriolis for this slot`);
     }
     const bp = m.blueprint;
     if (bp?.fdname && !m.preEngineered) {
-      if (!canEngineer(m)) problems.push(`${ref.key}: ${m.name ?? m.grp} cannot be engineered but carries ${bp.fdname}`);
+      if (!canEngineer(m)) problems.push(`${ref.key}: ${label(m)} cannot be engineered but carries ${bp.fdname}`);
       else if (!blueprintOffered(m.grp, bp.fdname)) problems.push(`${ref.key}: ${bp.fdname} is not an engineering option for ${m.grp}`);
     }
     const shipsAllowed: string[] = m.ship ? (Array.isArray(m.ship) ? m.ship : [m.ship]) : [];
-    if (shipsAllowed.length && !shipsAllowed.includes(ship.id)) problems.push(`${ref.key}: ${m.name} is restricted to another ship`);
+    if (shipsAllowed.length && !shipsAllowed.includes(ship.id)) problems.push(`${ref.key}: ${label(m)} is restricted to another ship`);
+  }
+  for (const family of UNIQUE) {
+    const slots = listSlots(ship).filter((r) => r.kind === 'internal' && r.slot.m && family.includes(r.slot.m.grp));
+    if (slots.length > 1) problems.push(`${slots.map((r) => r.key).join(', ')}: only one ${family.join('/')} allowed`);
   }
   const experimental = ship.hardpoints.filter((h: any) => h.m?.experimental).length;
   if (experimental > 4) problems.push(`${experimental} experimental weapons fitted (max 4)`);

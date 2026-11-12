@@ -3,48 +3,15 @@
 //   node dist/oracle.cjs [count] [seed] > crates/corai-engine/tests/fixtures/oracle.json
 import './stdio-guard.js';
 import LZString from 'lz-string';
-import { Calc, LinkMigration, Modules, Ships, coriolisCode, listSlots, place, recalcAll, shipFromCoriolis, stockShip, type EngSpec, type Ship } from './engine.js';
-import { engineeringOptions, slotCandidates } from './catalog.js';
+import { Calc, LinkMigration, Modules, Ships, coriolisCode, listSlots, shipFromCoriolis, stockShip, type Ship } from './engine.js';
+import { makeRng, randomBuild as randomBuildWith } from './oracle-lib.js';
 
 const [count = 400, seed = 7] = process.argv.slice(2).map(Number);
-
-let state = seed >>> 0;
-const rand = () => {
-  state = (state + 0x6d2b79f5) >>> 0;
-  let t = state;
-  t = Math.imul(t ^ (t >>> 15), t | 1);
-  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-};
-const pick = <T,>(xs: T[]): T => xs[Math.floor(rand() * xs.length)];
-
-interface SlotSpec { group: string; id: string; eng?: EngSpec | null }
-
+const rng = makeRng(seed);
+const { rand, pick } = rng;
 const opponent = stockShip('anaconda');
-// Module id "0" (a tbsc variant) is the only non-two-character id; Coriolis share codes assume two
-// characters, so builds containing it cannot round-trip through a URL. Leave it out.
-const filters = { allowCommunityGoal: true, excludeModules: ['0'] };
 const fin = (x: number) => (Number.isFinite(x) ? x : null);
-
-function randomBuild(shipId: string) {
-  const ship: Ship = stockShip(shipId);
-  const spec: Record<string, SlotSpec | null> = {};
-  const fill = rand(); // how full this build is
-  for (const ref of listSlots(ship)) {
-    let cands = slotCandidates(ship, ref, filters);
-    if (ref.kind !== 'standard' && ref.kind !== 'bulkheads' && rand() > fill) cands = [];
-    const m = cands.length ? pick(cands) : null;
-    let eng: EngSpec | null = null;
-    if (m && rand() < 0.7) {
-      const opts = engineeringOptions(m);
-      if (opts.length) eng = pick(opts);
-    }
-    place(ship, ref, m, eng);
-    spec[ref.key] = m ? { group: m.grp, id: ref.kind === 'bulkheads' ? String(m.bulkheadIndex) : m.id, eng } : null;
-  }
-  recalcAll(ship);
-  return { ship, spec };
-}
+const randomBuild = (shipId: string) => randomBuildWith(shipId, rng);
 
 // Per-module figures, so a mismatch in a ship total points at the module that causes it.
 function moduleRecord(m: any) {

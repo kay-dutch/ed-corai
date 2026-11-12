@@ -108,6 +108,8 @@ export function fitsSlot(ship: Ship, ref: SlotRef, m: any): boolean {
   if (!allowedOnShip(m, ship.id)) return false;
   if (ref.kind === 'standard') return fitsStandard(ship, ref, m);
   const slotName = (ref.name ?? '').toLowerCase();
+  // ModuleSet lists only modules whose max mass (shield generators, ...) carries hull + 6.5 t.
+  if (m.maxmass !== undefined && shipData(ship.id).properties.hullMass + 6.5 > m.maxmass) return false;
   if (ref.kind === 'internal') {
     if (m.class > ref.maxClass) return false;
     if (ref.eligible && !ref.eligible[m.grp]) return false;
@@ -116,11 +118,15 @@ export function fitsSlot(ship: Ship, ref: SlotRef, m: any): boolean {
     if (m.id === '7W' && slotName !== 'limpets') return false;
     if (m.grp === 'pcq' && !ship.luxuryCabins) return false;
     if (m.grp === 'fh' && !ship.fighterHangars) return false;
+    if (m.grp === 'fhmkii' && !ship.vesselHangarsMkII) return false;
+    if (m.grp === 'lpvmkii' && !ship.vehicleHangarsMkII) return false;
     return true;
   }
   if (ref.kind === 'hardpoint') {
     if (m.class === 0 || m.class > ref.maxClass) return false;
     if (ref.eligible && !ref.eligible[m.grp]) return false;
+    // The Anaconda Mk II takes the Mining Volley Repeater only on its two flagged hardpoints.
+    if (m.grp === 'mvr' && ship.id === 'anaconda2' && !ref.slot.mvr) return false;
     if (slotName === 'mining' && !MINING_HARDPOINT_GROUPS.has(m.grp)) return false;
     return true;
   }

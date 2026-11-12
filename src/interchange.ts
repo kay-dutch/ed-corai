@@ -18,7 +18,10 @@ export interface LoadoutModule {
   Item: string;
   On: boolean;
   Priority: number;
-  Engineering?: { BlueprintName: string; Level: number; Quality: number; ExperimentalEffect?: string };
+  Engineering?: {
+    BlueprintName: string; Level: number; Quality: number; ExperimentalEffect?: string;
+    Modifiers?: { Label: string; Value: number; OriginalValue: number; LessIsGood: 0 | 1 }[];
+  };
 }
 
 export interface Loadout {
@@ -38,6 +41,39 @@ function fdShipName(shipId: string): string {
   return fdNames.get(shipId) ?? shipId;
 }
 
+let fdLabels: Map<string, string> | undefined;
+/** Journal modifier label for a Coriolis attribute (first match in the data's modifierActions). */
+function fdLabel(attr: string): string | undefined {
+  if (!fdLabels) {
+    fdLabels = new Map();
+    for (const [key, actions] of Object.entries(Modifications.modifierActions)) {
+      if (key.startsWith('special_') || key.startsWith('trade_')) continue;
+      for (const a of Object.keys(actions as object)) if (!fdLabels.has(a)) fdLabels.set(a, key.replace(/^OutfittingFieldType_/, ''));
+    }
+  }
+  return fdLabels.get(attr);
+}
+
+/**
+ * The engineered values as the journal lists them: final value (experimental included) and the
+ * unmodified value, per attribute. Importers that read Modifiers get the exact build back.
+ */
+function modifiers(m: any): NonNullable<LoadoutModule['Engineering']>['Modifiers'] {
+  const out: NonNullable<NonNullable<LoadoutModule['Engineering']>['Modifiers']> = [];
+  const round6 = (x: number) => Math.round(x * 1e6) / 1e6;
+  for (const attr of Object.keys(m.mods ?? {})) {
+    const def = Modifications.modifications[attr];
+    if (!def || def.hidden || def.type === 'object') continue;
+    const label = fdLabel(attr);
+    const value = m.get(attr, true);
+    // Attributes without a base value (jitter on most weapons) start from 0, as in the journal.
+    const base = typeof m[attr] === 'number' ? m[attr] : 0;
+    if (!label || typeof value !== 'number' || !Number.isFinite(value)) continue;
+    out.push({ Label: label, Value: round6(value), OriginalValue: round6(base), LessIsGood: def.higherbetter === false ? 1 : 0 });
+  }
+  return out.length ? out : undefined;
+}
+
 function engineering(m: any): LoadoutModule['Engineering'] | undefined {
   const bp = m?.blueprint;
   if (!bp || !bp.fdname) return undefined;
@@ -48,6 +84,8 @@ function engineering(m: any): LoadoutModule['Engineering'] | undefined {
     Quality: typeof percent === 'number' && Number.isFinite(percent) ? Math.round(percent * 100) / 10000 : 1,
   };
   if (bp.special?.edname) out.ExperimentalEffect = bp.special.edname;
+  const mods = modifiers(m);
+  if (mods) out.Modifiers = mods;
   return out;
 }
 
@@ -61,6 +99,13 @@ function entry(slot: string, m: any, enabled: boolean, priority: number): Loadou
 /** Frontier slot names for a hull's hardpoints and internals, in Coriolis slot order. */
 export function journalSlotNames(shipId: string): { hardpoints: string[]; internal: (string | null)[] } {
   const template = shipData(shipId);
+  // Coriolis' authoritative slot table (exact journal names, Coriolis slot order) when it covers
+  // the hull; the reconstruction below is the importer's own fallback.
+  const ssHp = CompanionApiUtils.shipSlots?.(shipId, 'hardpoints');
+  const ssInt = CompanionApiUtils.shipSlots?.(shipId, 'internal');
+  if (ssHp && ssInt && ssHp.length === template.slots.hardpoints.length && ssInt.length === template.slots.internal.length) {
+    return { hardpoints: ssHp.map((s: any) => s.name), internal: ssInt.map((s: any) => s.name) };
+  }
   const counters: Record<number, number> = {};
   const hardpoints = template.slots.hardpoints.map((def: any) => {
     const cls = typeof def === 'object' ? def.class : def;
@@ -112,8 +157,7 @@ export function toLoadout(ship: Ship, name = ''): Loadout {
     if (slot.m?.symbol) modules.push(entry(names.hardpoints[i], slot.m, slot.enabled, slot.priority));
   });
   ship.internal.forEach((slot: any, i: number) => {
-    // Planetary approach suites are left out: they carry no stats and not every tool accepts them.
-    if (!slot.m?.symbol || slot.m.grp === 'pas' || names.internal[i] === 'PlanetaryApproachSuite') return;
+    if (!slot.m?.symbol || !names.internal[i]) return;
     modules.push(entry(names.internal[i]!, slot.m, slot.enabled, slot.priority));
   });
   return { event: 'Loadout', Ship: fdShipName(ship.id).toLowerCase(), ShipName: name, ShipIdent: '', Modules: modules };
@@ -209,18 +253,46 @@ function applyJournalModifiers(ship: Ship, loadout: any): void {
     for (const mf of eng.Modifiers) {
       if (typeof mf.Value !== 'number') continue;
       for (const attr of labelAttributes(mf.Label)) {
-        if (attr === 'rof' && !m.get('burst') && mf.Value > 0) {
-          // Coriolis' set('rof') computes 0 x Infinity for weapons without bursts. Its stored rof
-          // modifier x acts as rate = base / (1 + x), so x = base / target - 1.
-          const base = m.get('rof', false);
-          if (base) m.setModValue('rof', (base / mf.Value - 1) * 10000, true);
-          continue;
-        }
         // The journal value already includes any experimental effect.
         m.set(attr, mf.Value, true);
+        // Coriolis' set() mis-handles some attributes (rof on weapons with or without bursts,
+        // attributes with no base value); then find the stored modification that reproduces it.
+        if (!matches(m.get(attr), mf.Value)) solveModification(m, attr, mf.Value);
       }
     }
   }
+}
+
+const matches = (got: unknown, want: number) => typeof got === 'number' && Math.abs(got - want) <= 1e-6 * Math.max(1, Math.abs(want));
+
+/**
+ * Sets the stored modification of `attr` (Coriolis' scaled integer, stored including the
+ * experimental) so that `m.get(attr)` equals `target`, by bisection. Attributes are monotonic in
+ * their modification. Leaves the value unchanged when no bracket contains the target.
+ */
+function solveModification(m: any, attr: string, target: number): void {
+  const before = m.getModValue(attr, true) ?? 0;
+  const at = (x: number) => {
+    m.setModValue(attr, x, true);
+    const v = m.get(attr);
+    return typeof v === 'number' && Number.isFinite(v) ? v - target : NaN;
+  };
+  const edges = [-9999, -5000, 0, 5000, 50000, 1e6];
+  for (let i = 0; i + 1 < edges.length; i++) {
+    let lo = edges[i], hi = edges[i + 1];
+    let flo = at(lo), fhi = at(hi);
+    if (!(Number.isFinite(flo) && Number.isFinite(fhi)) || Math.sign(flo) === Math.sign(fhi)) continue;
+    for (let k = 0; k < 80 && hi - lo > 1e-4; k++) {
+      const mid = (lo + hi) / 2;
+      const fm = at(mid);
+      if (Math.sign(fm) === Math.sign(flo)) { lo = mid; flo = fm; } else { hi = mid; fhi = fm; }
+    }
+    // Coriolis stores whole numbers; take the closer of the two neighbours.
+    const a = Math.floor((lo + hi) / 2), b = a + 1;
+    m.setModValue(attr, Math.abs(at(a)) <= Math.abs(at(b)) ? a : b, true);
+    return;
+  }
+  m.setModValue(attr, before, true);
 }
 
 function fromLoadout(loadout: any): Ship {

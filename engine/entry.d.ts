@@ -18,5 +18,8 @@ export const Modifications: {
   specials: Record<string, any>;
 };
 export const JournalUtils: { shipFromLoadoutJSON(json: unknown): any };
-export const CompanionApiUtils: { SHIP_FD_NAME_TO_CORIOLIS_NAME: Record<string, string> };
+export const CompanionApiUtils: {
+  SHIP_FD_NAME_TO_CORIOLIS_NAME: Record<string, string>;
+  shipSlots?(shipId: string, group: 'internal' | 'hardpoints' | 'standard'): { class: number; name: string }[] | null;
+};
 export const LinkMigration: { OLD_INTERNAL_LAYOUTS: Record<string, { kind: string; class: number }[]>; OLD_HARDPOINT_LAYOUTS: Record<string, number[]> };

@@ -1,7 +1,7 @@
 // Typed façade over the upstream Coriolis shipyard engine (bundled from upstream/coriolis).
 import * as E from '../engine/entry.js';
 
-export const { Ships, Modules, Modifications, Calc, Constants, BlueprintFunctions, ModuleUtils, JournalUtils, CompanionApiUtils, LinkMigration } = E;
+export const { Ships, Modules, Modifications, Calc, Constants, BlueprintFunctions, ModuleUtils, JournalUtils, CompanionApiUtils, LinkMigration, Serializer } = E;
 export const ModuleGroupToName: Record<string, string> = E.Constants.ModuleGroupToName;
 
 // Memoise Module.get(): it recomputes engineered values from scratch on every call and dominates
