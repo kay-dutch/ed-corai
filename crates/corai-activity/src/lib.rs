@@ -57,7 +57,9 @@ pub struct Discovery {
     pub pid: u32,
 }
 
-/// ED Corai's per-user state folder: `%LOCALAPPDATA%\ED Corai` on Windows,
+pub mod defaults;
+
+/// ED Corai's per-user state folder: `CORAI_STATE_DIR` (tests), else `%LOCALAPPDATA%\ED Corai` on Windows,
 /// `~/Library/Application Support/ED Corai` on macOS, `$XDG_STATE_HOME/ed-corai` elsewhere.
 pub fn state_dir() -> Option<PathBuf> {
     let env = |k: &str| {
@@ -65,7 +67,9 @@ pub fn state_dir() -> Option<PathBuf> {
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
     };
-    if cfg!(windows) {
+    if let Some(d) = env("CORAI_STATE_DIR") {
+        Some(d)
+    } else if cfg!(windows) {
         env("LOCALAPPDATA").map(|d| d.join("ED Corai"))
     } else if cfg!(target_os = "macos") {
         env("HOME").map(|h| h.join("Library/Application Support/ED Corai"))

@@ -2,6 +2,9 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
@@ -22,7 +25,8 @@ before(async () => {
   await client.connect(new StdioClientTransport({
     command: rust ?? process.execPath,
     args: rust ? ['mcp'] : ['--no-deprecation', server],
-    env: { ...process.env, CORAI_UPDATE_CHECK: '0' },
+    // An empty state folder: no saved defaults, no reports to a running window.
+    env: { ...process.env, CORAI_UPDATE_CHECK: '0', CORAI_STATE_DIR: mkdtempSync(path.join(tmpdir(), 'corai-test-')) },
   }));
 });
 

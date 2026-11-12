@@ -6,7 +6,7 @@
 
 mod activity;
 mod journal_tools;
-pub mod update;
+pub use corai_update as update;
 
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
@@ -52,6 +52,8 @@ fn pretty(v: &Value) -> String {
 pub struct CoraiServer {
     notice: Arc<Mutex<Option<String>>>,
     reporter: Arc<Reporter>,
+    /// The saved defaults last mentioned to the AI app, so each set is mentioned once.
+    told_defaults: Arc<Mutex<Vec<String>>>,
 }
 
 impl CoraiServer {
@@ -80,6 +82,33 @@ impl CoraiServer {
 
     fn take_notice(&self) -> Option<String> {
         self.notice.lock().ok().and_then(|mut n| n.take())
+    }
+
+    /// Fills in the player's saved defaults (set in the window) where the call leaves them out.
+    /// Returns a note for the AI app the first time a given set is used.
+    fn apply_defaults(&self, tool: &str, args: &mut Value) -> Option<String> {
+        let path = corai_activity::defaults::defaults_path()?;
+        let defaults = corai_activity::defaults::Defaults::load(&path);
+        let takes = |key: &str| {
+            DEFINITIONS
+                .tools
+                .iter()
+                .find(|t| t.name == tool)
+                .and_then(|t| t.input_schema.get("properties"))
+                .is_some_and(|p| p.get(key).is_some())
+        };
+        let applied = defaults.apply(args, takes("context"), takes("engineering"));
+        let mut told = self.told_defaults.lock().ok()?;
+        if applied.is_empty() || *told == applied {
+            return None;
+        }
+        let note = format!(
+            "The player's saved defaults (ED Corai window) filled in what this call left out: {}. \
+             Mention it when it affects the answer; pass a value explicitly to override.",
+            applied.join(", ")
+        );
+        *told = applied;
+        Some(note)
     }
 }
 
@@ -182,9 +211,10 @@ impl ServerHandler for CoraiServer {
                 None,
             ));
         }
-        let args = request
+        let mut args = request
             .arguments
             .map_or(Value::Object(Default::default()), Value::Object);
+        let defaults_note = self.apply_defaults(&name, &mut args);
         if let Some(peer) = context.peer.peer_info() {
             let client = &peer.client_info;
             self.reporter
@@ -219,6 +249,9 @@ impl ServerHandler for CoraiServer {
         let result = match outcome {
             Ok(v) => {
                 let mut content = vec![ContentBlock::text(pretty(&v))];
+                if let Some(n) = defaults_note {
+                    content.push(ContentBlock::text(n));
+                }
                 if let Some(n) = self.take_notice() {
                     content.push(ContentBlock::text(format!("Update notice: {n}")));
                 }

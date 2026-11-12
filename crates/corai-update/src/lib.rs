@@ -1,5 +1,6 @@
-//! Release check against GitHub (port of the Node `checkForUpdates`). Installing updates of the
-//! native binaries arrives with the release pipeline.
+//! Release check against GitHub (port of the Node `checkForUpdates`) and self-update: download this
+//! platform's release zip, verify it against the release's SHA256SUMS.txt and replace the programs
+//! (the command-line program and the window) in the folder of the running one.
 
 use std::time::Duration;
 
@@ -317,42 +318,47 @@ pub fn replace_executable(exe: &std::path::Path, program: &[u8]) -> std::io::Res
 
 /// Removes the previous programs left behind by an update on Windows (one still running stays).
 pub fn cleanup_previous() {
-    if let Ok(exe) = std::env::current_exe() {
-        let _ = std::fs::remove_file(previous_path(&exe));
-        if let Some(dir) = exe.parent() {
-            let _ = std::fs::remove_file(previous_path(&dir.join(window_name())));
+    if let Some(dir) = program_dir() {
+        for name in [binary_name(), window_name()] {
+            let _ = std::fs::remove_file(previous_path(&dir.join(name)));
         }
     }
 }
 
-/// Installs the programs from a release zip: the running command-line program `running` (must be
-/// in the zip) and the window next to it (when the zip has one). Both are read from the zip before
-/// either is replaced. Returns the replaced paths.
+/// The folder of the running program, where both programs live.
+pub fn program_dir() -> Option<std::path::PathBuf> {
+    std::env::current_exe()
+        .ok()?
+        .parent()
+        .map(std::path::Path::to_path_buf)
+}
+
+/// Installs the programs from a release zip into `dir`: the command-line program (must be in the
+/// zip) and the window (when the zip has one). Both are read from the zip before either is
+/// replaced. Returns the replaced paths.
 ///
 /// # Errors
 /// The zip lacks the command-line program or a file cannot be replaced.
 pub fn install_programs(
     zip_bytes: &[u8],
-    running: &std::path::Path,
+    dir: &std::path::Path,
 ) -> Result<Vec<std::path::PathBuf>, String> {
     let cli = extract_binary(zip_bytes, binary_name())?;
     let window = extract_binary(zip_bytes, window_name()).ok();
     let mut done = Vec::new();
-    let mut put = |path: std::path::PathBuf, program: &[u8]| {
-        replace_executable(&path, program)
+    for (name, program) in [(binary_name(), Some(cli)), (window_name(), window)] {
+        let Some(program) = program else { continue };
+        let path = dir.join(name);
+        replace_executable(&path, &program)
             .map_err(|e| format!("Could not replace {}: {e}", path.display()))?;
         done.push(path);
-        Ok::<_, String>(())
-    };
-    put(running.to_path_buf(), &cli)?;
-    if let (Some(program), Some(dir)) = (window, running.parent()) {
-        put(dir.join(window_name()), &program)?;
     }
     Ok(done)
 }
 
-/// Downloads this platform's program from a release (default: the latest), verifies it against the
-/// release checksums and replaces the running program. The server must be restarted afterwards.
+/// Downloads this platform's programs from a release (default: the latest), verifies them against
+/// the release checksums and replaces them next to the running program. Running copies keep the
+/// old version until restarted.
 ///
 /// # Errors
 /// No release or asset for this platform, a failed download, a checksum mismatch, or the program
@@ -377,9 +383,8 @@ pub fn install_update(tag: Option<&str>) -> Result<Value, String> {
             "The downloaded {asset} does not match its published checksum; nothing was changed."
         ));
     }
-    let exe =
-        std::env::current_exe().map_err(|e| format!("Cannot locate the running program: {e}"))?;
-    let replaced = install_programs(&zip_bytes, &exe)?;
+    let dir = program_dir().ok_or("Cannot locate the running program.")?;
+    let replaced = install_programs(&zip_bytes, &dir)?;
     Ok(json!({
         "installed": summary["tag"],
         "from": env!("CARGO_PKG_VERSION"),
@@ -449,7 +454,7 @@ mod tests {
         let cli = dir.join(binary_name());
         std::fs::write(&cli, b"old cli").expect("write");
         // Before v0.3.0 the folder had no window: the update adds it.
-        let replaced = install_programs(&both, &cli).expect("installed");
+        let replaced = install_programs(&both, &dir).expect("installed");
         assert_eq!(replaced.len(), 2);
         assert_eq!(std::fs::read(&cli).expect("read"), b"new cli");
         assert_eq!(
@@ -460,13 +465,13 @@ mod tests {
         // A zip without the window (v0.2.0) still updates the command-line program.
         let cli_only = zip_of(&[(binary_name(), b"newer cli")]);
         assert_eq!(
-            install_programs(&cli_only, &cli).expect("installed").len(),
+            install_programs(&cli_only, &dir).expect("installed").len(),
             1
         );
         assert_eq!(std::fs::read(&cli).expect("read"), b"newer cli");
         // Without the command-line program nothing is touched.
         let window_only = zip_of(&[(window_name(), b"x")]);
-        assert!(install_programs(&window_only, &cli).is_err());
+        assert!(install_programs(&window_only, &dir).is_err());
         assert_eq!(
             std::fs::read(dir.join(window_name())).expect("read"),
             b"new window"

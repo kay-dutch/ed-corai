@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.3.0 — desktop window and your ships
+
+* **Desktop window.** `ed-corai` shows what ED Corai is doing: a Coriolis station that turns while
+  it works, the request and the AI app that sent it, recent results with Coriolis links, the
+  connected AI apps and the ship you fly now. Closing it never affects your AI app.
+* **Your ships from the game.** New tools `current_ship` and `recent_ships` read the game journal,
+  so you can ask about "my ship" without pasting a build.
+* **Defaults for your AI app.** Set your usual pips, damage mix and engineering in the window; ED
+  Corai uses them when a request does not say otherwise and tells the assistant.
+* **Updates for both programs**, from the assistant, the window or `ed-corai-cli update`.
+* `ed-corai-cli tool` runs every tool, including the journal and update tools.
+* Windows programs carry an icon and version details.
+
 ## v0.2.0 — native programs
 
 * **Download and run.** ED Corai now comes as a single program for Windows and macOS (Apple

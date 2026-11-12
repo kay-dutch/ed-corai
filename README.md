@@ -48,6 +48,8 @@ Coriolis or EDSY.
 | `export_build` | A build as SLEF or journal Loadout JSON, plus Coriolis and EDSY links |
 | `optimize_build` | Best outfitting of one ship for an objective and constraints |
 | `compare_ships` | Same optimisation across many hulls, ranked |
+| `current_ship` | The ship you fly now, read from the game journal, fully evaluated |
+| `recent_ships` | Your recently flown ships with key figures and links |
 | `check_for_updates` | Installed version, the game data it was built from, and the latest release |
 | `install_update` | Updates the install to a release, after you agree |
 
@@ -119,8 +121,11 @@ into a folder that will stay where it is (for example `Documents/ed-corai`):
 - **Windows**: `ed-corai-<version>-windows-x64.zip`
 - **macOS** (Apple silicon and Intel): `ed-corai-<version>-macos-universal.zip`
 
-The program inside is `ed-corai-cli` (`ed-corai-cli.exe` on Windows). It needs nothing else
-installed. Note its full path: every app below asks for it.
+Inside are two programs; neither needs anything else installed:
+
+- `ed-corai-cli` (`ed-corai-cli.exe` on Windows): the MCP server your AI app starts. Note its full
+  path: every app below asks for it.
+- `ed-corai` (`ed-corai.exe`): the optional [desktop window](#desktop-window).
 
 The programs are not code-signed yet, so the system distrusts them once:
 
@@ -267,10 +272,26 @@ Environment variables for the server:
 | `CORAI_DEBUG=1` | Log diagnostic output to stderr |
 | `CORAI_UPDATE_CHECK=0` | Do not look for new releases at start-up |
 | `CORAI_REPO=owner/name` | Check a fork for releases instead of this repository |
+| `CORAI_JOURNAL_DIR=path` | Read the game journal from another folder |
 
 Saved builds (SLEF, Loadout JSON) can be passed to the tools by path on the command line, e.g.
 `ed-corai-cli evaluate builds/my-corvette.slef` or
 `ed-corai-cli optimize builds/my-corvette.slef jumpLaden --lock hardpoint`.
+
+## Desktop window
+
+Start `ed-corai` (`ed-corai.exe`) to watch ED Corai work. It is optional: your AI app uses ED
+Corai the same with or without it.
+
+- The station turns while a tool runs; the window shows the request, the AI app that sent it and
+  the results, each with a link to open the build in Coriolis.
+- It lists the AI apps connected to ED Corai and the ship you fly now, from the game journal.
+- **Defaults for your AI app**: how you fly (SYS and WEP pips in combat, NPC or even damage, stock
+  or engineered modules). ED Corai uses them whenever a request does not say otherwise, and tells
+  the assistant so.
+- It offers new releases and installs them for both programs.
+
+Pin it to the taskbar or Dock if you like to keep it open next to the game.
 
 ## Updating
 
@@ -278,7 +299,7 @@ At start-up ED Corai checks GitHub for a newer release, at most once per launch,
 tells you when one is out. Say yes and it updates itself: it downloads the release for your
 system, checks it against the release's published checksum and replaces the program. Then restart
 it (`/mcp` in Claude Code, or restart your app). You can also ask "is there an update?" at any
-time, or run `ed-corai-cli update` yourself.
+time, run `ed-corai-cli update` yourself, or install it from the desktop window.
 
 By hand: download the new zip and unzip it over the old folder (on macOS, repeat the `xattr` step).
 
@@ -313,6 +334,15 @@ Paste a Coriolis link, an EDSY SLEF export or a journal Loadout.
 
 > This is my Corvette <SLEF>. Get the Anaconda <link> as close to it as possible in protection
 > and damage.
+
+**Your ships in the game**
+
+ED Corai reads the game journal on your PC (`Saved Games\Frontier Developments\Elite
+Dangerous`), so the assistant can see what you fly.
+
+> Look at my current ship. What would make it jump further without losing shields?
+
+> Which of my recent ships is best for a massacre mission?
 
 **What if**
 

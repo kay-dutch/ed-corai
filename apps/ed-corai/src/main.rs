@@ -5,8 +5,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod activity;
+mod defaults_ui;
+mod icon;
 mod ship;
 mod station;
+mod updater;
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
@@ -20,6 +23,8 @@ const README: &str = "https://github.com/kay-dutch/ed-corai#configuration";
 struct App {
     activity: Arc<Mutex<Activity>>,
     ship: Arc<Mutex<Option<ship::CurrentShip>>>,
+    updater: updater::Updater,
+    defaults: defaults_ui::DefaultsUi,
     spin: Spin,
     glow: f32,
     last_frame: Instant,
@@ -56,6 +61,8 @@ impl App {
         Self {
             activity,
             ship,
+            updater: updater::Updater::start(ctx),
+            defaults: defaults_ui::DefaultsUi::load(),
             spin: Spin::default(),
             glow: 0.0,
             last_frame: Instant::now(),
@@ -115,6 +122,7 @@ impl eframe::App for App {
         }
         let weak = ui.visuals().weak_text_color();
 
+        self.updater.banner(ui);
         egui::Panel::bottom("footer").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
@@ -175,6 +183,7 @@ impl eframe::App for App {
                 }
             });
             ui.add_space(10.0);
+            self.defaults.show(ui);
             ui.separator();
             if act.history.is_empty() {
                 return;
@@ -210,14 +219,25 @@ impl eframe::App for App {
 }
 
 fn main() -> eframe::Result {
-    // One window: a second start brings the first to the front instead.
-    if corai_activity::discovery_path().is_some_and(|p| corai_activity::focus_running_window(&p)) {
+    corai_update::cleanup_previous();
+    // One window: a second start brings the first to the front instead. After an update the new
+    // window starts with --replace while the old one closes.
+    let replacing = std::env::args().any(|a| a == "--replace");
+    if !replacing
+        && corai_activity::discovery_path()
+            .is_some_and(|p| corai_activity::focus_running_window(&p))
+    {
         return Ok(());
     }
     let viewport = egui::ViewportBuilder::default()
         .with_title(format!("ED Corai {}", env!("CARGO_PKG_VERSION")))
         .with_inner_size([440.0, 600.0])
-        .with_min_inner_size([340.0, 420.0]);
+        .with_min_inner_size([340.0, 420.0])
+        .with_icon(Arc::new(egui::IconData {
+            rgba: icon::rgba(128),
+            width: 128,
+            height: 128,
+        }));
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Glow,

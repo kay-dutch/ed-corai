@@ -1,6 +1,6 @@
 {
   "name": "ed-corai",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Elite Dangerous ship-build optimiser (MCP server) on the Coriolis engine",
   "main": "dist/server.cjs",
   "scripts": {
