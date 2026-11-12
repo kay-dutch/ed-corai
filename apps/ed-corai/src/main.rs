@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod activity;
+mod ship;
 mod station;
 
 use std::sync::{Arc, Mutex};
@@ -18,6 +19,7 @@ const README: &str = "https://github.com/kay-dutch/ed-corai#configuration";
 
 struct App {
     activity: Arc<Mutex<Activity>>,
+    ship: Arc<Mutex<Option<ship::CurrentShip>>>,
     spin: Spin,
     glow: f32,
     last_frame: Instant,
@@ -49,8 +51,11 @@ impl App {
                 }
             }
         };
+        let ship = Arc::new(Mutex::new(None));
+        watch_journal(Arc::clone(&ship), ctx.clone());
         Self {
             activity,
+            ship,
             spin: Spin::default(),
             glow: 0.0,
             last_frame: Instant::now(),
@@ -58,6 +63,26 @@ impl App {
             listen_error,
         }
     }
+}
+
+/// Polls the journal every few seconds and keeps `ship` current.
+fn watch_journal(ship: Arc<Mutex<Option<ship::CurrentShip>>>, ctx: egui::Context) {
+    let _ = std::thread::Builder::new()
+        .name("journal".into())
+        .spawn(move || {
+            let mut watcher = ship::Watcher::default();
+            loop {
+                if let Some(dir) = corai_journal::journal_dir()
+                    && let Some(now) = watcher.poll(&dir)
+                {
+                    if let Ok(mut s) = ship.lock() {
+                        *s = now;
+                    }
+                    ctx.request_repaint();
+                }
+                std::thread::sleep(Duration::from_secs(3));
+            }
+        });
 }
 
 /// "just now", "5 min ago", "2 h ago".
@@ -132,6 +157,20 @@ impl eframe::App for App {
                             format!("Connected: {}", names.join(", "))
                         })
                         .color(weak));
+                    }
+                }
+                if let Some(ship) = self.ship.lock().ok().and_then(|s| s.clone()) {
+                    ui.add_space(6.0);
+                    let mut text = format!("Flying: {}", ship.model);
+                    if !ship.name.is_empty() {
+                        text += &format!(" \u{201c}{}\u{201d}", ship.name);
+                    }
+                    if !ship.ident.is_empty() {
+                        text += &format!(" ({})", ship.ident);
+                    }
+                    ui.label(text);
+                    if let Some(link) = &ship.link {
+                        ui.hyperlink_to("Open in Coriolis", link);
                     }
                 }
             });

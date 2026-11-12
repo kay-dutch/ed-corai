@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 corai-activity = { path = "../corai-activity" }
+corai-journal = { path = "../corai-journal" }
 corai-service = { path = "../corai-service" }
 rmcp = { version = "3.9", features = ["server", "transport-io", "macros"] }
 sha2 = "0.11"

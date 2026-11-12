@@ -1,0 +1,14 @@
+[package]
+name = "corai-journal"
+description = "ED Corai: the player's ships from the Elite Dangerous journal files"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

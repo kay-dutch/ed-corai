@@ -5,6 +5,7 @@
 //! connection. When a newer release exists, the next tool result carries a one-time notice.
 
 mod activity;
+mod journal_tools;
 pub mod update;
 
 use std::sync::{Arc, LazyLock, Mutex};
@@ -82,17 +83,17 @@ impl CoraiServer {
     }
 }
 
-/// Why a tool call failed: bad arguments or a failed service call, or a failed update install.
+/// Why a tool call failed: bad arguments or a failed service call, or a failed adapter tool.
 enum ToolFailure {
     Call(CallError),
-    Update(String),
+    Failed(String),
 }
 
 impl std::fmt::Display for ToolFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Call(e) => e.fmt(f),
-            Self::Update(e) => f.write_str(e),
+            Self::Failed(e) => f.write_str(e),
         }
     }
 }
@@ -103,7 +104,8 @@ impl From<CallError> for ToolFailure {
     }
 }
 
-/// Runs a tool by name; update tools need network access and live here, the rest in the service.
+/// Runs a tool by name; update and journal tools need network or file access and live here, the
+/// rest in the service.
 fn run_tool(name: &str, args: &Value) -> Result<Value, ToolFailure> {
     match name {
         "check_for_updates" => Ok(update::check_for_updates()),
@@ -115,10 +117,29 @@ fn run_tool(name: &str, args: &Value) -> Result<Value, ToolFailure> {
                 }
                 .into());
             }
-            update::install_update(args["version"].as_str()).map_err(ToolFailure::Update)
+            update::install_update(args["version"].as_str()).map_err(ToolFailure::Failed)
+        }
+        "current_ship" => {
+            journal_tools::current_ship(corai_journal::journal_dir().as_deref(), args)
+                .map_err(ToolFailure::Failed)
+        }
+        "recent_ships" => {
+            journal_tools::recent_ships(corai_journal::journal_dir().as_deref(), args)
+                .map_err(ToolFailure::Failed)
         }
         _ => Ok(call(name, args)?),
     }
+}
+
+/// Runs any tool by name, as the MCP server would (for the command line).
+///
+/// # Errors
+/// The tool's error message.
+pub fn run_tool_text(name: &str, args: &Value) -> Result<Value, String> {
+    if !DEFINITIONS.tools.iter().any(|t| t.name == name) {
+        return Err(format!("Unknown tool {name}"));
+    }
+    run_tool(name, args).map_err(|e| e.to_string())
 }
 
 impl ServerHandler for CoraiServer {
@@ -212,7 +233,7 @@ impl ServerHandler for CoraiServer {
             Err(ToolFailure::Call(e)) => {
                 CallToolResult::error(vec![ContentBlock::text(e.to_string())])
             }
-            Err(ToolFailure::Update(e)) => CallToolResult::error(vec![ContentBlock::text(e)]),
+            Err(ToolFailure::Failed(e)) => CallToolResult::error(vec![ContentBlock::text(e)]),
         };
         Ok(result.into())
     }

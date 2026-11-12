@@ -30,9 +30,12 @@ after(async () => client?.close());
 
 test('exposes the expected tools', async () => {
   const { tools } = await client.listTools();
+  // The native server also reads the game journal.
+  const journal = process.env.CORAI_SERVER ? ['current_ship', 'recent_ships'] : [];
   assert.deepEqual(tools.map((t) => t.name).sort(), [
     'check_for_updates', 'compare_ships', 'evaluate_build', 'export_build', 'install_update', 'list_metrics', 'list_module_groups', 'list_ships', 'module_info', 'optimize_build', 'ship_details',
-  ]);
+    ...journal,
+  ].sort());
 });
 
 test('stock Python matches Coriolis', async () => {

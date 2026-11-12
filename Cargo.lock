@@ -490,10 +490,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "corai-journal"
+version = "0.2.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "corai-mcp"
 version = "0.2.0"
 dependencies = [
  "corai-activity",
+ "corai-journal",
  "corai-service",
  "rmcp",
  "serde",
@@ -756,8 +764,12 @@ name = "ed-corai"
 version = "0.2.0"
 dependencies = [
  "corai-activity",
+ "corai-data",
+ "corai-engine",
+ "corai-journal",
  "eframe",
  "egui",
+ "serde_json",
 ]
 
 [[package]]

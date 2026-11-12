@@ -106,7 +106,7 @@ fn run(cli: Cli) -> Result<Value, String> {
         }
         Command::Tool { name, args: a } => {
             let v = parse_json("args", a.as_deref())?.unwrap_or_else(|| json!({}));
-            return call(&name, &v).map_err(|e| e.to_string());
+            return corai_mcp::run_tool_text(&name, &v);
         }
         Command::Evaluate {
             build,
