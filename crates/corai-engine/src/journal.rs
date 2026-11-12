@@ -704,24 +704,25 @@ fn apply_journal_modifiers(ship: &mut Ship, loadout: &Value) {
             continue;
         };
         let blueprint_name = str_of(eng, "BlueprintName");
-        if m.blueprint().is_none() && !blueprint_name.is_empty() {
-            if let Some((key, def)) = find_blueprint(blueprint_name, m.def) {
-                let grade = eng
-                    .get("Level")
-                    .and_then(Value::as_f64)
-                    .filter(|g| *g != 0.0)
-                    .map_or(0, |g| g as u8);
-                let special = m.special();
-                m.set_engineering_records(
-                    Some(AppliedBlueprint {
-                        key,
-                        def,
-                        grade,
-                        coded: true,
-                    }),
-                    special,
-                );
-            }
+        if m.blueprint().is_none()
+            && !blueprint_name.is_empty()
+            && let Some((key, def)) = find_blueprint(blueprint_name, m.def)
+        {
+            let grade = eng
+                .get("Level")
+                .and_then(Value::as_f64)
+                .filter(|g| *g != 0.0)
+                .map_or(0, |g| g as u8);
+            let special = m.special();
+            m.set_engineering_records(
+                Some(AppliedBlueprint {
+                    key,
+                    def,
+                    grade,
+                    coded: true,
+                }),
+                special,
+            );
         }
         let effect = str_of(eng, "ExperimentalEffect");
         if !effect.is_empty() && m.blueprint().is_some() && m.special().is_none() {

@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.2.0 — native programs
+
+* **Download and run.** ED Corai now comes as a single program for Windows and macOS (Apple
+  silicon and Intel): no Node.js, git or build step. Unzip it and point your AI app at
+  `ed-corai-cli` with the argument `mcp`; the README has the setup for each app.
+* **Faster searches.** Optimisation runs 8 to 25 times faster and finds equal or better builds;
+  ship comparisons search all hulls in parallel.
+* **Self-update.** When a new release is out, the assistant offers it; after you agree, the
+  program downloads it, checks it against the published checksum and replaces itself. Or run
+  `ed-corai-cli update`.
+* **Command line.** `ed-corai-cli evaluate`, `optimize`, `tool`, `version`, `check-update` and
+  `update` work without an AI app.
+* **Fixes.** Share links carry current power priorities after modules are moved; the outfitting
+  rules now match Coriolis for maximum module mass, Mk II hangars and the Anaconda Mk II volley
+  repeater slots; journal imports name slots correctly for every ship; build exports keep exact
+  engineering values.
+* The Node.js version stays in the repository and keeps updating itself with git.
+
 ## v0.1.0 — first release
 
 * **Builds by the numbers.** Ask Claude for a build in plain words; ED Corai turns it into an

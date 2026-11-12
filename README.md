@@ -113,25 +113,44 @@ alternative when a ranking is close.
 
 ## Installation
 
-Requires Node.js 20 or newer and git.
+Download the zip for your system from the [latest release](../../releases/latest) and unzip it
+into a folder that will stay where it is (for example `Documents/ed-corai`):
 
-```sh
-git clone --recursive https://github.com/kay-dutch/ed-corai.git
-cd ed-corai
-npm install
-npm run build
-```
+- **Windows**: `ed-corai-<version>-windows-x64.zip`
+- **macOS** (Apple silicon and Intel): `ed-corai-<version>-macos-universal.zip`
 
-Forgot `--recursive`? Run `git submodule update --init` before building.
+The program inside is `ed-corai-cli` (`ed-corai-cli.exe` on Windows). It needs nothing else
+installed. Note its full path: every app below asks for it.
 
-`npm test` runs the end-to-end checks.
+The programs are not code-signed yet, so the system distrusts them once:
+
+- **Windows**: before unzipping, right-click the zip → Properties → tick *Unblock* → OK.
+- **macOS**: after unzipping, run once in Terminal:
+  `xattr -dr com.apple.quarantine /path/to/ed-corai`
+
+Check that it runs: `/path/to/ed-corai/ed-corai-cli version`.
+
+### From source
+
+With Rust 1.88 or newer: `git clone --recursive https://github.com/kay-dutch/ed-corai.git`, then
+`cargo build --release -p ed-corai-cli`; the program is `target/release/ed-corai-cli`.
+
+The original Node.js version is in the same repository (Node.js 20 or newer): `npm install`,
+`npm run build`, then use the command `node` with the argument `/path/to/ed-corai/dist/server.cjs`
+wherever the instructions below say `ed-corai-cli` and `mcp`. It updates itself with git
+instead of downloads.
 
 ## Configuration
+
+Every app needs the same two things: the full path to `ed-corai-cli` as the command, and `mcp` as
+its argument. In the examples, replace `PATH` with yours, e.g.
+`C:\\Users\\you\\Documents\\ed-corai\\ed-corai-cli.exe` on Windows (JSON needs doubled backslashes) or
+`/Users/you/Documents/ed-corai/ed-corai-cli` on macOS.
 
 ### Claude Code
 
 ```sh
-claude mcp add ed-corai -s user -- node /absolute/path/to/ed-corai/dist/server.cjs
+claude mcp add ed-corai -s user -- PATH mcp
 ```
 
 `-s user` makes it available in every project; without it, it only works in the folder where you
@@ -145,27 +164,25 @@ Add to `claude_desktop_config.json` (Settings → Developer → Edit Config):
 {
   "mcpServers": {
     "ed-corai": {
-      "command": "node",
-      "args": ["/absolute/path/to/ed-corai/dist/server.cjs"]
+      "command": "PATH",
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-Restart Claude Desktop afterwards. If it reports that `node` cannot be found (common with nvm or
-other version managers), put the full path that `which node` prints in `command`.
+Restart Claude Desktop afterwards.
 
 ### Other MCP apps
 
-ED Corai runs on your computer, so it works in any app that can start a local MCP server. Every
-app needs the same two things: the command `node` and the full path to `dist/server.cjs`.
+ED Corai runs on your computer, so it works in any app that can start a local MCP server.
 
 **OpenAI Codex CLI**, in `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.ed-corai]
-command = "node"
-args = ["/absolute/path/to/ed-corai/dist/server.cjs"]
+command = "PATH"
+args = ["mcp"]
 ```
 
 **Gemini CLI**, in `~/.gemini/settings.json`:
@@ -174,8 +191,8 @@ args = ["/absolute/path/to/ed-corai/dist/server.cjs"]
 {
   "mcpServers": {
     "ed-corai": {
-      "command": "node",
-      "args": ["/absolute/path/to/ed-corai/dist/server.cjs"]
+      "command": "PATH",
+      "args": ["mcp"]
     }
   }
 }
@@ -189,8 +206,8 @@ the command palette:
   "servers": {
     "ed-corai": {
       "type": "stdio",
-      "command": "node",
-      "args": ["/absolute/path/to/ed-corai/dist/server.cjs"]
+      "command": "PATH",
+      "args": ["mcp"]
     }
   }
 }
@@ -204,7 +221,7 @@ Claude Desktop above, in their own MCP settings file.
 ```python
 from agents.mcp import MCPServerStdio
 
-ed_corai = MCPServerStdio(params={"command": "node", "args": ["/absolute/path/to/ed-corai/dist/server.cjs"]})
+ed_corai = MCPServerStdio(params={"command": "PATH", "args": ["mcp"]})
 ```
 
 Things to know outside Claude:
@@ -251,24 +268,19 @@ Environment variables for the server:
 | `CORAI_UPDATE_CHECK=0` | Do not look for new releases at start-up |
 | `CORAI_REPO=owner/name` | Check a fork for releases instead of this repository |
 
-Keep your own builds in `builds/` (git-ignored): SLEF files there can be passed to the tools by
-path when running the CLI, e.g. `node dist/cli.cjs evaluate builds/my-corvette.slef`.
+Saved builds (SLEF, Loadout JSON) can be passed to the tools by path on the command line, e.g.
+`ed-corai-cli evaluate builds/my-corvette.slef` or
+`ed-corai-cli optimize builds/my-corvette.slef jumpLaden --lock hardpoint`.
 
 ## Updating
 
 At start-up ED Corai checks GitHub for a newer release, at most once per launch, and the assistant
-tells you when one is out. Say yes and it updates itself: it fetches the release, refreshes the
-game data, reinstalls and rebuilds. Then restart it (`/mcp` in Claude Code, or restart your app).
-You can also ask "is there an update?" at any time.
+tells you when one is out. Say yes and it updates itself: it downloads the release for your
+system, checks it against the release's published checksum and replaces the program. Then restart
+it (`/mcp` in Claude Code, or restart your app). You can also ask "is there an update?" at any
+time, or run `ed-corai-cli update` yourself.
 
-The automatic update needs a git clone without local changes. Otherwise, or by hand:
-
-```sh
-git pull
-git submodule update --init
-npm install
-npm run build
-```
+By hand: download the new zip and unzip it over the old folder (on macOS, repeat the `xattr` step).
 
 Each release states which Coriolis data it was built from; `check_for_updates` shows it for your
 install. New ships and modules reach ED Corai once they are in Coriolis.

@@ -3,7 +3,8 @@ name: release
 # Cutting a release is: add a section for the version to CHANGELOG.md, bump "version" in
 # package.json (and Cargo.toml's workspace version), commit, then
 #   git tag v0.2.0 && git push origin v0.2.0
-# Everything below is automatic. Installed copies see the new release on their next start.
+# Everything below is automatic: tests, Windows and macOS programs (unsigned), zips, SHA256SUMS.txt
+# and the GitHub release. Installed copies see the new release on their next start.
 on:
   push:
     tags: ["v*"]
@@ -12,7 +13,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  check:
     runs-on: ubuntu-latest
     env:
       CORAI_UPDATE_CHECK: "0"
@@ -44,6 +45,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Test the Rust version
+        run: cargo test --workspace --locked
+
       - name: Release notes
         run: |
           # The CHANGELOG section for this version, plus the Coriolis data it was built from.
@@ -64,12 +68,103 @@ jobs:
             echo
             echo "### Install or update"
             echo
-            echo "Installed copies offer this update in Claude on their next start. New install: see the README."
+            echo "Download the zip for your system below and see the README for setup. Installed copies offer this update on their next start and can install it themselves. The programs are not code-signed yet; the README explains the one-time step on macOS and Windows."
           } >> notes.md
           cat notes.md
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notes
+          path: notes.md
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+  # Release builds only for systems we can test on: Windows x64 and macOS (Apple silicon + Intel).
+  build:
+    needs: check
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x64
+          - os: macos-latest
+            platform: macos-universal
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_PROFILE_RELEASE_DEBUG: "0"
+      CARGO_PROFILE_RELEASE_STRIP: "true"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cargo build --release --locked -p ed-corai-cli
+          mkdir -p out && cp target/release/ed-corai-cli.exe out/
+
+      - name: Build (macOS universal)
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --locked -p ed-corai-cli --target aarch64-apple-darwin
+          cargo build --release --locked -p ed-corai-cli --target x86_64-apple-darwin
+          mkdir -p out
+          lipo -create -output out/ed-corai-cli \
+            target/aarch64-apple-darwin/release/ed-corai-cli \
+            target/x86_64-apple-darwin/release/ed-corai-cli
+          lipo -info out/ed-corai-cli
+          # Ad-hoc signature only (not code signing): macOS refuses unsigned arm64 programs.
+          codesign --force --sign - out/ed-corai-cli
+
+      - name: Smoke test
+        run: |
+          exe=out/ed-corai-cli; [ "$RUNNER_OS" = Windows ] && exe=out/ed-corai-cli.exe
+          "$exe" version
+          "$exe" version | grep -q "\"${{ needs.check.outputs.version }}\""
+          "$exe" evaluate python > /dev/null
+
+      - name: Package
+        run: |
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md CHANGELOG.md out/
+          name="ed-corai-${{ needs.check.outputs.version }}-${{ matrix.platform }}.zip"
+          if [ "$RUNNER_OS" = Windows ]; then
+            (cd out && 7z a -tzip "../$name" . > /dev/null)
+          else
+            (cd out && zip -X -r "../$name" .)
+          fi
+          ls -l "$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: ed-corai-*.zip
+
+  publish:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          merge-multiple: true
+
+      # The self-updater refuses a download whose hash is not listed here.
+      - name: Checksums
+        run: |
+          sha256sum ed-corai-*.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - uses: softprops/action-gh-release@v2
         with:
-          name: ED Corai v${{ steps.version.outputs.version }}
+          name: ED Corai v${{ needs.check.outputs.version }}
           body_path: notes.md
           prerelease: false
+          files: |
+            ed-corai-*.zip
+            SHA256SUMS.txt

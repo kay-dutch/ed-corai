@@ -1038,7 +1038,7 @@
   {
    "name": "install_update",
    "title": "Install update",
-   "description": "Updates this ED Corai install (a clean git clone) to a release: fetches the tag, refreshes the Coriolis submodules, installs dependencies and rebuilds. Only call after the user explicitly agreed. The MCP server must be restarted afterwards (Claude Code: /mcp, Claude Desktop: restart the app).",
+   "description": "Updates this ED Corai program to a release: downloads the release for this platform from GitHub, verifies its published checksum and replaces the program. Only call after the user explicitly agreed. The MCP server must be restarted afterwards (Claude Code: /mcp, Claude Desktop: restart the app).",
    "inputSchema": {
     "type": "object",
     "properties": {

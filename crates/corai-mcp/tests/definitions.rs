@@ -1,5 +1,6 @@
 //! The Rust server's tool definitions and instructions (`src/tools.json`) are identical to the
-//! Node server's, as recorded by `scripts/oracle-tools.mjs`.
+//! Node server's, as recorded by `scripts/oracle-tools.mjs`. One deliberate difference: the
+//! `install_update` description, since the program updates itself instead of a git clone.
 
 use serde_json::Value;
 
@@ -30,6 +31,16 @@ fn tool_definitions_match_node() {
         .flatten()
         .zip(node["tools"].as_array().into_iter().flatten())
     {
+        let (mut a, mut b) = (a.clone(), b.clone());
+        if a["name"] == "install_update" {
+            assert!(
+                a["description"]
+                    .as_str()
+                    .is_some_and(|d| d.contains("Only call after the user explicitly agreed"))
+            );
+            a["description"] = Value::Null;
+            b["description"] = Value::Null;
+        }
         assert_eq!(a, b, "definition of {} differs", a["name"]);
     }
 }

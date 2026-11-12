@@ -219,7 +219,7 @@ fn lz_base64(s: &str) -> String {
     let mut out = lz_str::compress_to_base64(s)
         .trim_end_matches('=')
         .to_string();
-    while out.len() % 4 != 0 {
+    while !out.len().is_multiple_of(4) {
         out.push('=');
     }
     out

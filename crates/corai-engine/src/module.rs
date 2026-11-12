@@ -415,10 +415,10 @@ impl Module {
         let mut m = self.mod_value(name, false);
         if m.is_none_or(f64::is_nan) {
             if self.is_shield_generator() {
-                if let Some(opt) = self.mod_value("optmass", false).filter(|v| !v.is_nan()) {
-                    if name == "minmass" || (name == "maxmass" && opt > 0.0) {
-                        m = Some(opt);
-                    }
+                if let Some(opt) = self.mod_value("optmass", false).filter(|v| !v.is_nan())
+                    && (name == "minmass" || (name == "maxmass" && opt > 0.0))
+                {
+                    m = Some(opt);
                 }
             } else {
                 m = self.mod_value("optmass", false);

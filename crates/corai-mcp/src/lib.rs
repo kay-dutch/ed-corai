@@ -74,15 +74,33 @@ impl CoraiServer {
     }
 }
 
+/// Why a tool call failed: bad arguments or a failed service call, or a failed update install.
+enum ToolFailure {
+    Call(CallError),
+    Update(String),
+}
+
+impl From<CallError> for ToolFailure {
+    fn from(e: CallError) -> Self {
+        Self::Call(e)
+    }
+}
+
 /// Runs a tool by name; update tools need network access and live here, the rest in the service.
-fn run_tool(name: &str, args: &Value) -> Result<Value, CallError> {
+fn run_tool(name: &str, args: &Value) -> Result<Value, ToolFailure> {
     match name {
         "check_for_updates" => Ok(update::check_for_updates()),
-        "install_update" => Err(CallError::Arguments {
-            tool: name.into(),
-            message: "Automatic installation is not available in this build yet. Download the latest release from GitHub and replace the program.".into(),
-        }),
-        _ => call(name, args),
+        "install_update" => {
+            if args["confirm"] != true {
+                return Err(CallError::Arguments {
+                    tool: name.into(),
+                    message: "confirm must be true: install only after the user agreed.".into(),
+                }
+                .into());
+            }
+            update::install_update(args["version"].as_str()).map_err(ToolFailure::Update)
+        }
+        _ => Ok(call(name, args)?),
     }
 }
 
@@ -128,13 +146,16 @@ impl ServerHandler for CoraiServer {
                 }
                 CallToolResult::success(content)
             }
-            Err(CallError::Arguments { message, tool }) => {
+            Err(ToolFailure::Call(CallError::Arguments { message, tool })) => {
                 return Err(McpError::invalid_params(
                     format!("Invalid arguments for tool {tool}: {message}"),
                     None,
                 ));
             }
-            Err(e) => CallToolResult::error(vec![ContentBlock::text(e.to_string())]),
+            Err(ToolFailure::Call(e)) => {
+                CallToolResult::error(vec![ContentBlock::text(e.to_string())])
+            }
+            Err(ToolFailure::Update(e)) => CallToolResult::error(vec![ContentBlock::text(e)]),
         };
         Ok(result.into())
     }

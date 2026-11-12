@@ -89,30 +89,48 @@ pub fn repo() -> String {
         .unwrap_or_else(|| "kay-dutch/ed-corai".to_string())
 }
 
-fn latest_release(repo: &str) -> Result<Value, String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(8)))
+fn agent(timeout: Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
         .http_status_as_error(false)
         .build()
-        .into();
-    let mut req = agent
-        .get(format!(
-            "https://api.github.com/repos/{repo}/releases/latest"
-        ))
+        .into()
+}
+
+fn github(url: &str) -> Result<Value, String> {
+    let mut req = agent(Duration::from_secs(8))
+        .get(url)
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "ed-corai-update-check");
     if let Ok(token) = std::env::var("GITHUB_TOKEN") {
         req = req.header("Authorization", format!("Bearer {token}"));
     }
     let mut res = req.call().map_err(|e| e.to_string())?;
-    match res.status().as_u16() {
-        404 => return Err(format!("No published releases found for {repo}.")),
-        200..=299 => {}
-        s => return Err(format!("GitHub answered {s} for {repo}.")),
+    let status = res.status().as_u16();
+    let body = res.body_mut().read_to_string().map_err(|e| e.to_string())?;
+    if !(200..300).contains(&status) {
+        return Err(status.to_string());
     }
-    let r: Value =
-        serde_json::from_str(&res.body_mut().read_to_string().map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
+    serde_json::from_str(&body).map_err(|e| e.to_string())
+}
+
+/// The raw GitHub release: the latest, or the one with `tag`.
+fn fetch_release(repo: &str, tag: Option<&str>) -> Result<Value, String> {
+    let url = match tag {
+        Some(t) => format!("https://api.github.com/repos/{repo}/releases/tags/{t}"),
+        None => format!("https://api.github.com/repos/{repo}/releases/latest"),
+    };
+    github(&url).map_err(|status| match (status.as_str(), tag) {
+        ("404", None) => format!("No published releases found for {repo}."),
+        ("404", Some(t)) => format!("Release {t} not found in {repo}."),
+        (s, _) if s.chars().all(|c| c.is_ascii_digit()) => {
+            format!("GitHub answered {s} for {repo}.")
+        }
+        (other, _) => other.to_string(),
+    })
+}
+
+fn release_summary(r: &Value) -> Value {
     let tag = r["tag_name"].as_str().unwrap_or_default().to_string();
     let notes = r["body"].as_str().unwrap_or_default();
     let notes = if notes.chars().count() > 3000 {
@@ -120,14 +138,42 @@ fn latest_release(repo: &str) -> Result<Value, String> {
     } else {
         notes.to_string()
     };
-    Ok(json!({
+    json!({
         "tag": tag,
         "version": tag.trim_start_matches(['v', 'V']),
         "name": r["name"].as_str().filter(|n| !n.is_empty()).unwrap_or(&tag),
         "url": r["html_url"],
         "publishedAt": r["published_at"],
         "notes": notes,
-    }))
+    })
+}
+
+/// The release asset with this platform's program, e.g. `ed-corai-0.2.0-windows-x64.zip`.
+pub fn asset_name(version: &str) -> Option<String> {
+    if cfg!(target_os = "windows") {
+        Some(format!("ed-corai-{version}-windows-x64.zip"))
+    } else if cfg!(target_os = "macos") {
+        Some(format!("ed-corai-{version}-macos-universal.zip"))
+    } else {
+        None
+    }
+}
+
+/// File name of the program inside the release zip.
+pub fn binary_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "ed-corai-cli.exe"
+    } else {
+        "ed-corai-cli"
+    }
+}
+
+fn asset_url<'a>(release: &'a Value, name: &str) -> Option<&'a str> {
+    release["assets"]
+        .as_array()?
+        .iter()
+        .find(|a| a["name"] == name)
+        .and_then(|a| a["browser_download_url"].as_str())
 }
 
 /// Installed version, latest release and whether an update is available.
@@ -135,31 +181,176 @@ pub fn check_for_updates() -> Value {
     let current = build_info();
     let installed = env!("CARGO_PKG_VERSION");
     let repo = repo();
-    match latest_release(&repo) {
+    match fetch_release(&repo, None) {
         Err(e) => json!({
             "current": current, "repo": repo, "updateAvailable": false, "canAutoInstall": false,
             "message": format!("Could not check for updates: {e}"),
         }),
-        Ok(latest) => {
-            let version = latest["version"].as_str().unwrap_or_default();
-            let available = compare_versions(version, installed) == std::cmp::Ordering::Greater;
-            let message = if available {
-                format!(
-                    "ED Corai {version} is available (installed {installed}). Download it from {}.",
-                    latest["url"].as_str().unwrap_or_default()
-                )
-            } else {
-                format!(
+        Ok(raw) => {
+            let latest = release_summary(&raw);
+            let version = latest["version"].as_str().unwrap_or_default().to_string();
+            let available = compare_versions(&version, installed) == std::cmp::Ordering::Greater;
+            let installable = asset_name(&version).is_some_and(|a| asset_url(&raw, &a).is_some())
+                && asset_url(&raw, CHECKSUMS).is_some();
+            let message = match (available, installable) {
+                (false, _) => format!(
                     "ED Corai {installed} is up to date (latest release {}).",
                     latest["tag"].as_str().unwrap_or_default()
-                )
+                ),
+                (true, true) => format!(
+                    "ED Corai {version} is available (installed {installed}). It can be installed automatically; restart the MCP server afterwards."
+                ),
+                (true, false) => format!(
+                    "ED Corai {version} is available (installed {installed}). Download it from {}.",
+                    latest["url"].as_str().unwrap_or_default()
+                ),
             };
             json!({
                 "current": current, "repo": repo, "latest": latest, "updateAvailable": available,
-                "canAutoInstall": false, "message": message,
+                "canAutoInstall": available && installable, "message": message,
             })
         }
     }
+}
+
+const CHECKSUMS: &str = "SHA256SUMS.txt";
+/// Upper bound on a download, far above the real size, against runaway responses.
+const MAX_DOWNLOAD: u64 = 200 * 1024 * 1024;
+
+fn download(url: &str) -> Result<Vec<u8>, String> {
+    let mut res = agent(Duration::from_secs(300))
+        .get(url)
+        .header("User-Agent", "ed-corai-updater")
+        .call()
+        .map_err(|e| format!("Download failed: {e}"))?;
+    if !res.status().is_success() {
+        return Err(format!("Download failed: HTTP {}", res.status().as_u16()));
+    }
+    res.body_mut()
+        .with_config()
+        .limit(MAX_DOWNLOAD)
+        .read_to_vec()
+        .map_err(|e| format!("Download failed: {e}"))
+}
+
+/// The hash `SHA256SUMS.txt` lists for `name` (`<hex>  <name>` per line).
+pub fn expected_checksum(sums: &str, name: &str) -> Option<String> {
+    sums.lines().find_map(|l| {
+        let (hash, file) = l.trim().split_once(char::is_whitespace)?;
+        (file.trim().trim_start_matches('*') == name).then(|| hash.to_lowercase())
+    })
+}
+
+/// Lowercase hex SHA-256 of `bytes`.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The program file from a release zip (matched by file name, in any folder).
+pub fn extract_binary(zip_bytes: &[u8], name: &str) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes))
+        .map_err(|e| format!("Not a valid release zip: {e}"))?;
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+        let is_it = file.name().is_ok_and(|n| {
+            std::path::Path::new(n.as_ref())
+                .file_name()
+                .is_some_and(|f| f == name)
+        });
+        if is_it {
+            let mut out = Vec::new();
+            file.read_to_end(&mut out).map_err(|e| e.to_string())?;
+            return Ok(out);
+        }
+    }
+    Err(format!("The release zip does not contain {name}."))
+}
+
+/// Where the previous program goes on Windows (a running program cannot be overwritten there, but
+/// it can be renamed).
+fn previous_path(exe: &std::path::Path) -> std::path::PathBuf {
+    exe.with_extension("old")
+}
+
+/// Puts `program` in place of `exe`: written next to it first, then swapped in.
+pub fn replace_executable(exe: &std::path::Path, program: &[u8]) -> std::io::Result<()> {
+    let dir = exe.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let staged = dir.join(format!(
+        ".{}.new",
+        exe.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("ed-corai-cli")
+    ));
+    std::fs::write(&staged, program)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
+    }
+    if cfg!(windows) {
+        let old = previous_path(exe);
+        let _ = std::fs::remove_file(&old);
+        std::fs::rename(exe, &old)?;
+        if let Err(e) = std::fs::rename(&staged, exe) {
+            let _ = std::fs::rename(&old, exe); // put the working program back
+            return Err(e);
+        }
+    } else {
+        std::fs::rename(&staged, exe)?;
+    }
+    Ok(())
+}
+
+/// Removes the previous program left behind by an update on Windows.
+pub fn cleanup_previous() {
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::fs::remove_file(previous_path(&exe));
+    }
+}
+
+/// Downloads this platform's program from a release (default: the latest), verifies it against the
+/// release checksums and replaces the running program. The server must be restarted afterwards.
+///
+/// # Errors
+/// No release or asset for this platform, a failed download, a checksum mismatch, or the program
+/// file cannot be replaced.
+pub fn install_update(tag: Option<&str>) -> Result<Value, String> {
+    let repo = repo();
+    let release = fetch_release(&repo, tag)?;
+    let summary = release_summary(&release);
+    let version = summary["version"].as_str().unwrap_or_default().to_string();
+    let asset = asset_name(&version)
+        .ok_or("Automatic updates are available for Windows and macOS only.")?;
+    let asset_link =
+        asset_url(&release, &asset).ok_or_else(|| format!("Release {version} has no {asset}."))?;
+    let sums_link = asset_url(&release, CHECKSUMS)
+        .ok_or_else(|| format!("Release {version} has no {CHECKSUMS}."))?;
+    let zip_bytes = download(asset_link)?;
+    let sums = String::from_utf8_lossy(&download(sums_link)?).into_owned();
+    let want = expected_checksum(&sums, &asset)
+        .ok_or_else(|| format!("{CHECKSUMS} does not list {asset}."))?;
+    if sha256_hex(&zip_bytes) != want {
+        return Err(format!(
+            "The downloaded {asset} does not match its published checksum; nothing was changed."
+        ));
+    }
+    let program = extract_binary(&zip_bytes, binary_name())?;
+    let exe =
+        std::env::current_exe().map_err(|e| format!("Cannot locate the running program: {e}"))?;
+    replace_executable(&exe, &program)
+        .map_err(|e| format!("Could not replace {}: {e}", exe.display()))?;
+    Ok(json!({
+        "installed": summary["tag"],
+        "from": env!("CARGO_PKG_VERSION"),
+        "path": exe.display().to_string(),
+        "restartRequired": true,
+        "message": format!("ED Corai {version} is installed. Restart the MCP server (Claude Code: /mcp; Claude Desktop: restart the app)."),
+    }))
 }
 
 #[cfg(test)]
@@ -175,6 +366,48 @@ mod tests {
         assert_eq!(compare_versions("1.0.0-rc.1", "1.0.0"), Less);
         assert_eq!(compare_versions("1.0.0-beta.10", "1.0.0-beta.2"), Greater);
         assert_eq!(compare_versions("1.0", "1.0.0"), Equal);
+    }
+
+    #[test]
+    fn finds_checksums_by_file_name() {
+        let sums =
+            "ABC123  ed-corai-0.2.0-windows-x64.zip\nfff  ed-corai-0.2.0-macos-universal.zip\n";
+        assert_eq!(
+            expected_checksum(sums, "ed-corai-0.2.0-windows-x64.zip").as_deref(),
+            Some("abc123")
+        );
+        assert_eq!(expected_checksum(sums, "missing.zip"), None);
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn extracts_the_program_and_swaps_it_in() {
+        use std::io::Write;
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut z = zip::ZipWriter::new(&mut buf);
+            let opts = zip::write::SimpleFileOptions::default();
+            z.start_file("README.md", opts).expect("zip");
+            z.write_all(b"readme").expect("zip");
+            z.start_file(format!("ed-corai/{}", binary_name()), opts)
+                .expect("zip");
+            z.write_all(b"new program").expect("zip");
+            z.finish().expect("zip");
+        }
+        let program = extract_binary(buf.get_ref(), binary_name()).expect("program found");
+        assert_eq!(program, b"new program");
+        assert!(extract_binary(buf.get_ref(), "nope").is_err());
+
+        let dir = std::env::temp_dir().join(format!("corai-update-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let exe = dir.join(binary_name());
+        std::fs::write(&exe, b"old program").expect("write");
+        replace_executable(&exe, &program).expect("replaced");
+        assert_eq!(std::fs::read(&exe).expect("read"), b"new program");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -70,15 +70,15 @@ fn code_param(url: &str) -> String {
             let b = c.as_bytes();
             let mut i = 0;
             while i < b.len() {
-                if b[i] == b'%' && i + 2 < b.len() + 1 {
-                    if let Some(v) = c
+                if b[i] == b'%'
+                    && i + 2 < b.len() + 1
+                    && let Some(v) = c
                         .get(i + 1..i + 3)
                         .and_then(|h| u8::from_str_radix(h, 16).ok())
-                    {
-                        out.push(v);
-                        i += 3;
-                        continue;
-                    }
+                {
+                    out.push(v);
+                    i += 3;
+                    continue;
                 }
                 out.push(b[i]);
                 i += 1;

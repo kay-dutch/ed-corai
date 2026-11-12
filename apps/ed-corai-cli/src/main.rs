@@ -66,6 +66,12 @@ enum Command {
     Version,
     /// Looks for a newer release on GitHub.
     CheckUpdate,
+    /// Downloads a release (default: the latest) and replaces this program.
+    Update {
+        /// Release tag, e.g. v0.2.0.
+        #[arg(long)]
+        version: Option<String>,
+    },
 }
 
 /// A build argument: a file's contents when it names a file, else the text itself.
@@ -95,6 +101,9 @@ fn run(cli: Cli) -> Result<Value, String> {
         Command::Mcp { .. } => unreachable!("handled in main"),
         Command::Version => return Ok(corai_mcp::update::build_info()),
         Command::CheckUpdate => return Ok(corai_mcp::update::check_for_updates()),
+        Command::Update { version } => {
+            return corai_mcp::update::install_update(version.as_deref());
+        }
         Command::Tool { name, args: a } => {
             let v = parse_json("args", a.as_deref())?.unwrap_or_else(|| json!({}));
             return call(&name, &v).map_err(|e| e.to_string());
@@ -145,6 +154,7 @@ fn run(cli: Cli) -> Result<Value, String> {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    corai_mcp::update::cleanup_previous();
     if let Command::Mcp { no_update_check } = cli.command {
         let check = !no_update_check && std::env::var("CORAI_UPDATE_CHECK").as_deref() != Ok("0");
         let rt = match tokio::runtime::Builder::new_multi_thread()
