@@ -438,9 +438,16 @@ impl Ship {
         };
         let dry = self.def.properties.hull_mass + num(self.bulkhead.r().mass) + sum(|r| r.mass);
         let fuel = sum(|r| r.fuel);
+        // Each module's cargo rounded to the game's whole tonnes (Coriolis' Math.round): an
+        // engineered rack stores 42.998 t for the game's 43.
         let cargo: f64 = modules
             .iter()
-            .map(|m| m.r().cargo.filter(|c| *c != 0.0).map_or(0.0, f64::floor))
+            .map(|m| {
+                m.r()
+                    .cargo
+                    .filter(|c| *c != 0.0)
+                    .map_or(0.0, crate::jsmath::js_round)
+            })
             .sum();
         let passengers = sum(|r| r.passengers);
         let s = &mut self.stats;

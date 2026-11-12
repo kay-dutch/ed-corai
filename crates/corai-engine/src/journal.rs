@@ -684,11 +684,91 @@ fn solve_modification(m: &mut Module, attr: &str, target: f64) {
     m.set_mod_value_js(attr, before, true);
 }
 
-/// Sets each engineered attribute to exactly the journal's final value.
+/// Journal labels the game writes as percentages (or metres) where Coriolis and EDSY use fractions
+/// (or kilometres): the game's KineticResistance 40 is Coriolis' kinres 0.4.
+const GAME_UNITS: &[(&str, f64)] = &[
+    ("KineticResistance", 100.0),
+    ("ThermicResistance", 100.0),
+    ("ExplosiveResistance", 100.0),
+    ("DefenceModifierHealthMultiplier", 100.0),
+    ("DefenceModifierShieldMultiplier", 100.0),
+    ("EngineOptPerformance", 100.0),
+    ("ShieldGenStrength", 100.0),
+    ("Range", 1000.0),
+];
+
+fn game_unit(label: &str) -> Option<f64> {
+    GAME_UNITS
+        .iter()
+        .find(|(l, _)| *l == label)
+        .map(|(_, s)| *s)
+}
+
+/// Whether a Loadout carries the game's units (written by the game) rather than Coriolis' (EDSY's
+/// SLEF and Coriolis' exports). Decided by the OriginalValues of the labels above against Coriolis'
+/// stock values for the same modules; without such evidence a journal event (it has a timestamp)
+/// counts as the game's.
+fn has_game_units(ship: &mut Ship, loadout: &Value) -> bool {
+    let (mut game, mut coriolis) = (0, 0);
+    for entry in loadout
+        .get("Modules")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(modifiers) = engineering_of(entry)
+            .and_then(|e| e.get("Modifiers"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for mf in modifiers {
+            let label = str_of(mf, "Label");
+            let (Some(scale), Some(original)) = (
+                game_unit(label),
+                mf.get("OriginalValue").and_then(Value::as_f64),
+            ) else {
+                continue;
+            };
+            let Some(m) = find_imported(ship, str_of(entry, "Slot")) else {
+                continue;
+            };
+            for attr in label_attributes(label) {
+                let Some(base) = m.base(attr).filter(|b| *b != 0.0 && b.is_finite()) else {
+                    continue;
+                };
+                let ratio = original / base;
+                if (ratio / scale - 1.0).abs() < 0.05 {
+                    game += 1;
+                } else if (ratio - 1.0).abs() < 0.05 {
+                    coriolis += 1;
+                }
+            }
+        }
+    }
+    if game == coriolis {
+        loadout.get("timestamp").is_some_and(Value::is_string)
+    } else {
+        game > coriolis
+    }
+}
+
+/// A modifier's value in Coriolis' units.
+fn coriolis_value(label: &str, value: f64, game_units: bool) -> f64 {
+    match game_unit(label) {
+        Some(scale) if game_units => value / scale,
+        _ => value,
+    }
+}
+
+/// Sets each engineered attribute to exactly the journal's final value, in Coriolis' units.
+/// (Coriolis' own importer reads the game's units only: EDSY's fraction-valued SLEF arrives with
+/// resistances 100x too small.)
 fn apply_journal_modifiers(ship: &mut Ship, loadout: &Value) {
     let Some(modules) = loadout.get("Modules").and_then(Value::as_array) else {
         return;
     };
+    let game_units = has_game_units(ship, loadout);
     for entry in modules {
         let Some(eng) = engineering_of(entry) else {
             continue;
@@ -734,7 +814,9 @@ fn apply_journal_modifiers(ship: &mut Ship, loadout: &Value) {
             let Some(value) = mf.get("Value").and_then(Value::as_f64) else {
                 continue;
             };
-            for attr in label_attributes(str_of(mf, "Label")) {
+            let label = str_of(mf, "Label");
+            let value = coriolis_value(label, value, game_units);
+            for attr in label_attributes(label) {
                 // The journal value already includes any experimental effect.
                 m.set_attribute(attr, value, true);
                 if !matches(m.get(attr), value) {
@@ -751,6 +833,7 @@ pub fn import_discrepancies(ship: &mut Ship, loadout: &Value) -> Vec<String> {
     let Some(modules) = loadout.get("Modules").and_then(Value::as_array) else {
         return out;
     };
+    let game_units = has_game_units(ship, loadout);
     for entry in modules {
         let Some(modifiers) = engineering_of(entry)
             .and_then(|e| e.get("Modifiers"))
@@ -765,15 +848,15 @@ pub fn import_discrepancies(ship: &mut Ship, loadout: &Value) -> Vec<String> {
             };
             let label = str_of(mf, "Label");
             for attr in label_attributes(label) {
-                let (Some(want), Some(got)) =
-                    (mf.get("Value").and_then(Value::as_f64), m.get(attr))
+                let (Some(raw), Some(got)) = (mf.get("Value").and_then(Value::as_f64), m.get(attr))
                 else {
                     continue;
                 };
+                let want = coriolis_value(label, raw, game_units);
                 if (got - want).abs() > 1e-3 * want.abs().max(1.0) {
                     out.push(format!(
                         "{slot} {label}: game {}, imported {}",
-                        js_number(want),
+                        js_number(raw),
                         js_number(js_round(got * 1e4) / 1e4)
                     ));
                 }
@@ -798,11 +881,37 @@ fn js_number(x: f64) -> String {
 /// # Errors
 /// See [`coriolis_ship_from_loadout`].
 pub fn ship_from_loadout(loadout: &Value) -> Result<(Ship, Vec<String>), JournalError> {
+    let paid = without_free_variants(loadout);
+    let loadout = paid.as_ref().unwrap_or(loadout);
     let mut ship = coriolis_ship_from_loadout(loadout)?;
     apply_journal_modifiers(&mut ship, loadout);
     ship.recalc();
     let issues = import_discrepancies(&mut ship, loadout);
     Ok((ship, issues))
+}
+
+/// The Loadout with the game's no-cost stock modules (`…_free`, e.g. the fighter bay an Anaconda
+/// Mk II comes with) named as the modules they are; Coriolis' data lists only those. `None` when
+/// there are none.
+fn without_free_variants(loadout: &Value) -> Option<Value> {
+    let is_free = |m: &Value| {
+        m.get("Item")
+            .and_then(Value::as_str)
+            .is_some_and(|i| i.to_lowercase().ends_with("_free"))
+    };
+    let modules = loadout.get("Modules")?.as_array()?;
+    if !modules.iter().any(is_free) {
+        return None;
+    }
+    let mut out = loadout.clone();
+    for m in out["Modules"].as_array_mut()? {
+        if is_free(m)
+            && let Some(item) = m["Item"].as_str()
+        {
+            m["Item"] = item[..item.len() - "_free".len()].into();
+        }
+    }
+    Some(out)
 }
 
 // ---------------------------------------------------------------- export

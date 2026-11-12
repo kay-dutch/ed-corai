@@ -12,6 +12,12 @@
 * **Updates for both programs**, from the assistant, the window or `ed-corai-cli update`.
 * `ed-corai-cli tool` runs every tool, including the journal and update tools.
 * Windows programs carry an icon and version details.
+* **Fix: builds from the game journal.** Loadouts written by the game (journal, `current_ship`)
+  were read with EDSY's units: resistances, shield and hull boosts and thruster and shield
+  strength came out 100 times too large, giving impossible speeds and shield figures. ED Corai now
+  recognises which program wrote a Loadout. Stock fitted modules (the fighter bay of an Anaconda
+  Mk II or Caspian) are no longer lost, and engineered cargo racks hold the game's whole tonnes.
+  Imported ships now match the game's own jump range, mass and cargo.
 
 ## v0.2.0 — native programs
 

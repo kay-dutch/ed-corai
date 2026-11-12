@@ -192,6 +192,44 @@ function labelAttributes(label: string): string[] {
   return key ? Object.keys(Modifications.modifierActions[key]) : [];
 }
 
+/**
+ * Journal labels the game writes as percentages (or metres) where Coriolis and EDSY use fractions
+ * (or kilometres): the game's KineticResistance 40 is Coriolis' kinres 0.4.
+ */
+const GAME_UNITS: Record<string, number> = {
+  KineticResistance: 100, ThermicResistance: 100, ExplosiveResistance: 100,
+  DefenceModifierHealthMultiplier: 100, DefenceModifierShieldMultiplier: 100,
+  EngineOptPerformance: 100, ShieldGenStrength: 100, Range: 1000,
+};
+
+/**
+ * Whether a Loadout carries the game's units (written by the game) rather than Coriolis' (EDSY's
+ * SLEF and Coriolis' exports). Decided by the OriginalValues of the labels above against Coriolis'
+ * stock values for the same modules; without such evidence a journal event (it has a timestamp)
+ * counts as the game's.
+ */
+function hasGameUnits(ship: Ship, loadout: any): boolean {
+  let game = 0, coriolis = 0;
+  for (const mod of loadout.Modules ?? []) {
+    for (const mf of mod.Engineering?.Modifiers ?? []) {
+      const scale = GAME_UNITS[mf.Label];
+      const m = scale ? findImported(ship, mod) : undefined;
+      if (!m || typeof mf.OriginalValue !== 'number') continue;
+      for (const attr of labelAttributes(mf.Label)) {
+        const base = m[attr];
+        if (typeof base !== 'number' || !base) continue;
+        const ratio = mf.OriginalValue / base;
+        if (Math.abs(ratio / scale - 1) < 0.05) game++;
+        else if (Math.abs(ratio - 1) < 0.05) coriolis++;
+      }
+    }
+  }
+  return game !== coriolis ? game > coriolis : typeof loadout.timestamp === 'string';
+}
+
+/** A modifier's value in Coriolis' units. */
+const coriolisValue = (label: string, value: number, gameUnits: boolean) => (gameUnits && GAME_UNITS[label] ? value / GAME_UNITS[label] : value);
+
 /** The imported module in the journal's slot (several slots often hold the same item). */
 function findImported(ship: Ship, mod: any): any {
   const slot = String(mod.Slot).toLowerCase();
@@ -212,6 +250,7 @@ function findImported(ship: Ship, mod: any): any {
  */
 export function importDiscrepancies(ship: Ship, loadout: any): string[] {
   const out: string[] = [];
+  const gameUnits = hasGameUnits(ship, loadout);
   for (const mod of loadout.Modules ?? []) {
     for (const mf of mod.Engineering?.Modifiers ?? []) {
       const m = findImported(ship, mod);
@@ -219,7 +258,8 @@ export function importDiscrepancies(ship: Ship, loadout: any): string[] {
       for (const attr of labelAttributes(mf.Label)) {
         const got = m.get(attr);
         if (typeof mf.Value !== 'number' || typeof got !== 'number') continue;
-        if (Math.abs(got - mf.Value) > 1e-3 * Math.max(1, Math.abs(mf.Value))) {
+        const want = coriolisValue(mf.Label, mf.Value, gameUnits);
+        if (Math.abs(got - want) > 1e-3 * Math.max(1, Math.abs(want))) {
           out.push(`${mod.Slot} ${mf.Label}: game ${mf.Value}, imported ${Math.round(got * 1e4) / 1e4}`);
         }
       }
@@ -229,11 +269,13 @@ export function importDiscrepancies(ship: Ship, loadout: any): string[] {
 }
 
 /**
- * Coriolis' journal importer misreads several modifier units (resistances arrive 100x too small,
- * shield-booster strength and some fire rates are wrong, some blueprints are dropped). The journal
- * carries the game's final values, so set each engineered attribute to exactly that value.
+ * Coriolis' journal importer reads the game's units only (EDSY's fraction-valued SLEF arrives with
+ * resistances 100x too small), gets some fire rates wrong and drops some blueprints. The Modifiers
+ * carry the final values, so set each engineered attribute to exactly that value, converted to
+ * Coriolis' units.
  */
 function applyJournalModifiers(ship: Ship, loadout: any): void {
+  const gameUnits = hasGameUnits(ship, loadout);
   for (const mod of loadout.Modules ?? []) {
     const eng = mod.Engineering;
     if (!eng?.Modifiers?.length) continue;
@@ -252,12 +294,13 @@ function applyJournalModifiers(ship: Ship, loadout: any): void {
     }
     for (const mf of eng.Modifiers) {
       if (typeof mf.Value !== 'number') continue;
+      const value = coriolisValue(mf.Label, mf.Value, gameUnits);
       for (const attr of labelAttributes(mf.Label)) {
         // The journal value already includes any experimental effect.
-        m.set(attr, mf.Value, true);
+        m.set(attr, value, true);
         // Coriolis' set() mis-handles some attributes (rof on weapons with or without bursts,
         // attributes with no base value); then find the stored modification that reproduces it.
-        if (!matches(m.get(attr), mf.Value)) solveModification(m, attr, mf.Value);
+        if (!matches(m.get(attr), value)) solveModification(m, attr, value);
       }
     }
   }
@@ -295,8 +338,19 @@ function solveModification(m: any, attr: string, target: number): void {
   m.setModValue(attr, before, true);
 }
 
-function fromLoadout(loadout: any): Ship {
-  if (!loadout || !Array.isArray(loadout.Modules)) throw new Error('Not a Loadout: missing "Modules".');
+/**
+ * The Loadout with the game's no-cost stock modules (`…_free`, e.g. the fighter bay an Anaconda
+ * Mk II comes with) named as the modules they are; Coriolis' data lists only those.
+ */
+function withoutFreeVariants(loadout: any): any {
+  const isFree = (m: any) => typeof m?.Item === 'string' && m.Item.toLowerCase().endsWith('_free');
+  if (!loadout.Modules.some(isFree)) return loadout;
+  return { ...loadout, Modules: loadout.Modules.map((m: any) => (isFree(m) ? { ...m, Item: m.Item.slice(0, -'_free'.length) } : m)) };
+}
+
+function fromLoadout(raw: any): Ship {
+  if (!raw || !Array.isArray(raw.Modules)) throw new Error('Not a Loadout: missing "Modules".');
+  const loadout = withoutFreeVariants(raw);
   let ship: Ship;
   try {
     ship = JournalUtils.shipFromLoadoutJSON(loadout);
