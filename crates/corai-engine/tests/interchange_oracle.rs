@@ -118,6 +118,13 @@ fn exports_match_node() {
             d.push(format!("slef appURL describes another build: {got_url}"));
         }
         slef[0]["header"]["appURL"] = want_slef[0]["header"]["appURL"].clone();
+        // The program version moves with every release, the fixture only when regenerated.
+        assert_eq!(
+            slef[0]["header"]["appVersion"],
+            env!("CARGO_PKG_VERSION"),
+            "SLEF appVersion"
+        );
+        slef[0]["header"]["appVersion"] = want_slef[0]["header"]["appVersion"].clone();
         same_json("slef", want_slef, &slef, &mut d);
         for m in d {
             failures.push(format!("case {i} {ship_id}: {m}"));

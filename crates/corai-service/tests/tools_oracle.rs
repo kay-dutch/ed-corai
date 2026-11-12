@@ -1,6 +1,7 @@
 //! Every recorded Node tool call (`scripts/oracle-tools.mjs`) gives the same JSON or the same
 //! error message from the Rust service. Links (and the SLEF's embedded link) compare by the build
-//! they describe, since compressed bytes differ between zlib builds.
+//! they describe, since compressed bytes differ between zlib builds. The SLEF `appVersion` is
+//! the version of the program, which moves with every release.
 
 use corai_engine::{codec, interchange};
 use corai_service::dispatch::call;
@@ -46,6 +47,10 @@ fn same_json(path: &str, want: &Value, got: &Value, out: &mut Vec<String>) {
                     );
                     if !same_build(a, b) || a.contains("bn=") != b.contains("bn=") {
                         out.push(format!("{p}: links describe different builds"));
+                    }
+                } else if k == "appVersion" {
+                    if g[k] != env!("CARGO_PKG_VERSION") {
+                        out.push(format!("{p}: {} is not this program's version", g[k]));
                     }
                 } else if k == "json" {
                     // export_build: the document as a string.
