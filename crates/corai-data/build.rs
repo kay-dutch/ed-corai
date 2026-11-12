@@ -106,6 +106,8 @@ fn main() {
     doc.insert("ships".into(), Value::Object(ships));
     doc.insert("modules".into(), Value::Object(modules));
     doc.insert("modifications".into(), Value::Object(modifications));
+    // Authoritative journal slot names (Coriolis' distribution ships it as `ShipSlots`).
+    doc.insert("shipSlots".into(), read_json(&ships_dir, "ship-slots.json"));
 
     let out =
         PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets OUT_DIR")).join("coriolis.json");

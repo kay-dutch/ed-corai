@@ -12,6 +12,7 @@ corai-data.workspace = true
 flate2 = "1.1.11"
 indexmap.workspace = true
 lz-str = "0.2.1"
+serde_json.workspace = true
 thiserror.workspace = true
 
 [lints]

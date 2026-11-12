@@ -5,6 +5,8 @@
 
 pub mod calc;
 pub mod codec;
+pub mod interchange;
+pub mod journal;
 pub mod jsmath;
 pub mod module;
 pub mod module_set;

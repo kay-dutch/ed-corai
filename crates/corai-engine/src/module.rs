@@ -590,6 +590,137 @@ impl Module {
         self.set_mod_value(name, if value.is_nan() { 0.0 } else { value });
     }
 
+    /// `setModValue(name, value, valueiswithspecial)`. With `with_special` the value already includes
+    /// the experimental effect, which is backed out before storing (when the module carries an
+    /// experimental). `None` and `0` delete the modification; NaN is stored as-is.
+    pub fn set_mod_value_js(&mut self, name: &str, value: f64, with_special: bool) {
+        if !with_special {
+            self.set_mod_value(name, value);
+            return;
+        }
+        let data = &*DATA;
+        let mut value = Some(value);
+        // In Coriolis the experimental hangs off the blueprint record, which may be empty.
+        if let Some(special) = self.special
+            && let Some(action) = data
+                .modifications
+                .modifier_actions
+                .get(special.key)
+                .and_then(|a| a.get(name))
+            && let Some(m) = data.modifications.modifications.get(name)
+        {
+            value = match action {
+                ModifierAction::Value(a) if *a == 0.0 => value, // falsy action: no adjustment
+                ModifierAction::Value(a) => value.and_then(|v| {
+                    if RESISTANCES.contains(&name) {
+                        let base = self.base(name);
+                        let res = (if truthy(base) { num(base) } else { 0.0 }) + v / 10000.0;
+                        let experimental = a / 100.0;
+                        // JS: `- this[name]` is NaN when the module has no base value.
+                        Some(
+                            ((experimental - res) / (experimental - 1.0)
+                                - base.unwrap_or(f64::NAN))
+                                * 10000.0,
+                        )
+                    } else {
+                        match m.method {
+                            ModificationMethod::Additive => Some(v - a),
+                            ModificationMethod::Overwrite => None,
+                            ModificationMethod::Multiplicative => {
+                                Some(((v / 10000.0 + 1.0) / (1.0 + a) - 1.0) * 10000.0)
+                            }
+                        }
+                    }
+                }),
+                ModifierAction::DamageDist(_) => None,
+            };
+        }
+        match value {
+            Some(v) if v != 0.0 => {
+                self.mods.insert(name.to_string(), v);
+            }
+            _ => {
+                self.mods.shift_remove(name);
+            }
+        }
+        self.invalidate();
+    }
+
+    /// `set(name, value, valueIsWithSpecial)`: stores the modification that makes the attribute
+    /// equal `value` (Coriolis' formula, including its mistakes for fire rate on weapons without
+    /// bursts, which the importer corrects afterwards).
+    pub fn set_attribute(&mut self, name: &str, value: f64, with_special: bool) {
+        let data = &*DATA;
+        let Some(m) = data.modifications.modifications.get(name) else {
+            return;
+        };
+        if m.kind != ModificationKind::Object && value.is_nan() {
+            return;
+        }
+        let base = self.base(name);
+        let js_base = base.unwrap_or(f64::NAN); // `undefined` in arithmetic
+        let mod_value = match m.method {
+            ModificationMethod::Overwrite => value,
+            ModificationMethod::Additive => value - if truthy(base) { js_base } else { 0.0 },
+            _ if name == "shieldboost" || name == "hullboost" => {
+                (1.0 + value) / (1.0 + js_base) - 1.0
+            }
+            _ if name == "rof" => {
+                let burst = or(self.get("burst"), 1.0);
+                let burst_int = 1.0 / num(self.get("burstrof"));
+                let interval = burst / value;
+                let new_fireint = interval - (burst - 1.0) * burst_int;
+                new_fireint / self.base("fireint").unwrap_or(f64::NAN) - 1.0
+            }
+            _ => {
+                if base == Some(0.0) {
+                    0.0
+                } else {
+                    value / js_base - 1.0
+                }
+            }
+        };
+        let scaled = match m.kind {
+            ModificationKind::Percentage => mod_value * 10000.0,
+            ModificationKind::Numeric => mod_value * 100.0,
+            ModificationKind::Object => mod_value,
+        };
+        self.set_mod_value_js(name, scaled, with_special);
+    }
+
+    /// `setQualityCB(blueprint, quality, (f, v) => setModValue(f, v, false))`: the blueprint's
+    /// features at a roll quality, without clearing other modifications or checking the group.
+    pub fn apply_quality_unchecked(&mut self, def: &'static BlueprintDef, grade: u8, quality: f64) {
+        for (feature, value) in quality_values(def, grade, quality) {
+            self.set_mod_value(feature, value);
+        }
+        if let Some(g) = def.grades.get(grade.to_string().as_str()) {
+            for feature in g.features.values() {
+                if let corai_data::Feature::DamageDist(d) = feature {
+                    self.damagedist_mod = Some(d);
+                }
+            }
+        }
+        self.invalidate();
+    }
+
+    /// Replaces the blueprint and experimental records without touching modifications.
+    pub fn set_engineering_records(
+        &mut self,
+        blueprint: Option<AppliedBlueprint>,
+        special: Option<AppliedSpecial>,
+    ) {
+        self.blueprint = blueprint;
+        self.special = special;
+        self.invalidate();
+    }
+
+    /// Sets the stored damage-type overwrite (an experimental's or blueprint's object value).
+    pub fn set_damagedist_mod(&mut self, d: &'static IndexMap<String, f64>) {
+        self.damagedist_mod = Some(d);
+        self.invalidate();
+    }
+
     /// Applies a blueprint at a roll quality (1.0 = best roll), replacing previous modifications.
     ///
     /// # Errors

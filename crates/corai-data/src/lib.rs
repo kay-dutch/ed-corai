@@ -21,6 +21,32 @@ pub struct CoriolisData {
     pub ships: IndexMap<String, ShipDef>,
     pub modules: ModuleCatalog,
     pub modifications: ModificationsData,
+    /// Journal slot names per ship, keyed by Coriolis id or lowercased Frontier ship name.
+    #[serde(rename = "shipSlots")]
+    pub ship_slots: IndexMap<String, ShipSlotTable>,
+}
+
+/// One entry of `ship-slots.json` (the `_ShipSlots` header entry has no slots).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ShipSlotTable {
+    pub slots: Option<NamedSlotGroups>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NamedSlotGroups {
+    #[serde(default)]
+    pub standard: Vec<NamedSlot>,
+    #[serde(default)]
+    pub hardpoints: Vec<NamedSlot>,
+    #[serde(default)]
+    pub internal: Vec<NamedSlot>,
+}
+
+/// A slot with its exact Frontier journal name, e.g. `Slot01_Size7` or `HugeHardpoint1`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct NamedSlot {
+    pub class: u8,
+    pub name: String,
 }
 
 /// Module definitions by category, then by group code (e.g. `fsd`, `mc`, `sg`).
