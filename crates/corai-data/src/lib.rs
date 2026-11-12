@@ -77,6 +77,10 @@ pub struct ShipProperties {
     pub fighter_hangars: bool,
     #[serde(default)]
     pub luxury_cabins: bool,
+    #[serde(default, rename = "vesselHangarsMkII")]
+    pub vessel_hangars_mk_ii: bool,
+    #[serde(default, rename = "vehicleHangarsMkII")]
+    pub vehicle_hangars_mk_ii: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -95,6 +99,9 @@ pub enum SlotSpec {
         class: u8,
         name: Option<String>,
         eligible: Option<IndexMap<String, u8>>,
+        /// Opt-in for the Mining Volley Repeater (Anaconda Mk II lower large hardpoints).
+        #[serde(default)]
+        mvr: bool,
     },
 }
 
@@ -110,6 +117,11 @@ impl SlotSpec {
             Self::Size(_) => None,
             Self::Restricted { name, .. } => name.as_deref(),
         }
+    }
+
+    /// Whether this hardpoint opts in to the Mining Volley Repeater on ships that gate it.
+    pub fn mvr(&self) -> bool {
+        matches!(self, Self::Restricted { mvr: true, .. })
     }
 
     /// Groups allowed in a restricted slot; `None` means unrestricted.
@@ -352,6 +364,25 @@ pub struct SpecialDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ship_flags_and_slot_opt_ins_parse() {
+        let p = |f: fn(&ShipProperties) -> bool| {
+            DATA.ships.values().filter(|s| f(&s.properties)).count()
+        };
+        assert_eq!(p(|p| p.vessel_hangars_mk_ii), 4);
+        assert_eq!(p(|p| p.vehicle_hangars_mk_ii), 4);
+        let anaconda2 = &DATA.ships["anaconda2"];
+        assert_eq!(
+            anaconda2
+                .slots
+                .hardpoints
+                .iter()
+                .filter(|s| s.mvr())
+                .count(),
+            2
+        );
+    }
 
     #[test]
     fn loads_all_ships_and_modules() {

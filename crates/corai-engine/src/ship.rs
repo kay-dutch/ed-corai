@@ -27,6 +27,8 @@ pub struct Slot {
     /// Restriction label, e.g. `Military`, `Cargo`, `PlanetaryApproachSuite`.
     pub name: Option<&'static str>,
     pub eligible: Option<&'static IndexMap<String, u8>>,
+    /// Opt-in for the Mining Volley Repeater (see `SlotSpec::mvr`).
+    pub mvr: bool,
     pub module: Option<Module>,
     pub enabled: bool,
     /// Power priority band 0..=4.
@@ -40,6 +42,7 @@ impl Slot {
             max_class: spec.class(),
             name: spec.name(),
             eligible: spec.eligible(),
+            mvr: spec.mvr(),
             module: None,
             enabled: true,
             priority: 0,

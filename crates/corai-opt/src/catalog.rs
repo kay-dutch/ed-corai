@@ -183,6 +183,14 @@ pub fn fits(ship: &Ship, slot: &Slot, m: &ModuleDef) -> bool {
     }
     let name = slot.name.unwrap_or_default().to_ascii_lowercase();
     let eligible = |grp: &str| slot.eligible.is_none_or(|e| e.contains_key(grp));
+    // ModuleSet lists only modules whose max mass (shield generators, ...) carries hull + 6.5 t.
+    if slot.kind != SlotKind::Standard
+        && m.stat("maxmass")
+            .is_some_and(|mm| ship.def.properties.hull_mass + 6.5 > mm)
+    {
+        return false;
+    }
+    let props = &ship.def.properties;
     match slot.kind {
         SlotKind::Standard => m.class <= slot.max_class, // refined per slot by `fits_standard`
         SlotKind::Internal => {
@@ -192,14 +200,18 @@ pub fn fits(ship: &Ship, slot: &Slot, m: &ModuleDef) -> bool {
                 && ((m.id != "4C" && m.id != "4F" && m.grp != "pas")
                     || name == "planetaryapproachsuite")
                 && (m.id != "7W" || name == "limpets")
-                && (m.grp != "pcq" || ship.def.properties.luxury_cabins)
-                && (m.grp != "fh" || ship.def.properties.fighter_hangars)
+                && (m.grp != "pcq" || props.luxury_cabins)
+                && (m.grp != "fh" || props.fighter_hangars)
+                && (m.grp != "fhmkii" || props.vessel_hangars_mk_ii)
+                && (m.grp != "lpvmkii" || props.vehicle_hangars_mk_ii)
         }
         SlotKind::Hardpoint => {
             m.class > 0
                 && m.class <= slot.max_class
                 && eligible(&m.grp)
                 && (name != "mining" || MINING_GROUPS.contains(&m.grp.as_str()))
+                // The Anaconda Mk II takes the volley repeater only on its two flagged hardpoints.
+                && (m.grp != "mvr" || ship.id != "anaconda2" || slot.mvr)
         }
         SlotKind::Utility => m.class == 0 && eligible(&m.grp),
     }

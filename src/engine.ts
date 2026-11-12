@@ -87,6 +87,10 @@ export function shipFromCoriolis(urlOrCode: string, shipIdHint?: string): Ship {
 }
 
 export function coriolisCode(ship: Ship): string {
+  // Coriolis caches the power and engineering strings; refresh them so moved modules, changed
+  // priorities and toggled power never export stale values.
+  ship.updatePowerPrioritesString();
+  ship.updatePowerEnabledString();
   ship.updateModificationsString();
   return ship.toString();
 }

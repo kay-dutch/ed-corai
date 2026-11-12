@@ -7,7 +7,9 @@ pub mod calc;
 pub mod codec;
 pub mod jsmath;
 pub mod module;
+pub mod module_set;
 pub mod ship;
 
 pub use module::{DamageDist, EngineeringError, Module};
+pub use module_set::ModuleSet;
 pub use ship::{STANDARD_GROUPS, Ship, ShipError, Slot, SlotKind, Stats};

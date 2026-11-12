@@ -58,6 +58,8 @@ export function weaponGroups(): string[] {
 /** "Unrecognised …" import placeholders (rating Z, Int_Missing_* / Hpt_Missing_*): zero mass, not real modules. */
 function isPlaceholder(m: any): boolean {
   if ((m.id === '0z' || m.id === '1z') && !m.name && !m.ukName) return true;
+  // Coriolis share codes assume two-character ids; a module without one cannot be linked.
+  if (String(m.id).length !== 2) return true;
   if (m.rating === 'Z' || /_Missing_/.test(m.symbol ?? '') || m.grp === 'mh' || m.grp === 'mm') return true;
   const name = String(m.name ?? '').toLowerCase();
   return name.includes('error') || name.includes('placeholder');
@@ -198,7 +200,7 @@ export function canEngineer(m: any): boolean {
   if (!m || m.engineering === false || m.engineering === 'False') return false;
   if (isGuardian(m)) return false;
   const mods = Modifications.modules[m.grp];
-  return Boolean(mods && (mods.modifications?.length || mods.blueprints));
+  return Boolean(mods && (mods.modifications?.length || Object.keys(mods.blueprints ?? {}).length));
 }
 
 export function isGuardian(m: any): boolean {

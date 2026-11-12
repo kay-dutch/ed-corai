@@ -5,15 +5,16 @@ import './stdio-guard.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
-  BlueprintFunctions, Modules, Serializer, Ships, coriolisCode, findSlot, listSlots, recalcAll,
+  BlueprintFunctions, Modules, Serializer, Ships, coriolisCode, findSlot, listSlots, place, recalcAll,
   shipFromCoriolis, stockShip, type Ship,
 } from './engine.js';
 import { METRICS, getMetric, makeContext } from './metrics.js';
 import { validateBuild } from './validate.js';
 import { summarize } from './describe.js';
 import { parseBuild, toLoadout, toSlef, edsyUrl } from './interchange.js';
-import { isGuardian } from './catalog.js';
+import { engineeringOptions, isGuardian, slotCandidates } from './catalog.js';
 import { makeRng, randomBuild } from './oracle-lib.js';
+import { assignPriorities, tidyInternalSlots } from './arrange.js';
 
 const rng = makeRng(11);
 const { rand, pick } = rng;
@@ -26,6 +27,21 @@ const builds: { ship: string; code: string; label: string }[] = [];
 const add = (ship: Ship, label: string) => builds.push({ ship: ship.id, code: coriolisCode(ship), label });
 for (const id of shipIds) add(stockShip(id), 'stock');
 for (let i = 0; i < 2 * shipIds.length; i++) add(randomBuild(shipIds[i % shipIds.length], rng).ship, 'random');
+// Builds that exercise the corai-only weapon effects: a Thermal Vent beam and a Corrosive Shell
+// multi-cannon in random hardpoints of random builds.
+const fitWeapon = (ship: Ship, grp: string, eng: { blueprint: string; grade: number; special: string }) => {
+  const refs = listSlots(ship).filter((r) => r.kind === 'hardpoint');
+  const r = refs.length ? pick(refs) : undefined;
+  const m = r && (Modules.hardpoints[grp] ?? []).filter((x: any) => x.class <= r.maxClass && !x.preEngineered && x.id.length === 2);
+  if (r && m?.length) place(ship, r, pick(m), eng);
+};
+for (let i = 0; i < 24; i++) {
+  const ship = randomBuild(shipIds[(i * 7) % shipIds.length], rng).ship;
+  if (rand() < 0.8) fitWeapon(ship, 'bl', { blueprint: 'Weapon_LongRange', grade: 5, special: 'special_thermal_vent' });
+  if (rand() < 0.8) fitWeapon(ship, 'mc', { blueprint: 'Weapon_HighCapacity', grade: 4, special: 'special_corrosive_shell' });
+  recalcAll(ship);
+  add(ship, 'vent+corrosive');
+}
 const load = (b: { ship: string; code: string }) => shipFromCoriolis(b.code, b.ship);
 
 // ---------------------------------------------------------------- metrics
@@ -205,6 +221,40 @@ const interchangeCases = builds.filter((_, i) => i % 2 === 0).map((b) => {
   return { ship: b.ship, code: b.code, exports: { slef, loadout }, inputs, imports };
 });
 
+// ---------------------------------------------------------------- catalog
+
+// What the search may put in every slot of every hull (default filters: everything allowed), and
+// the engineering options of every module that appears.
+const catalogShips: Record<string, Record<string, string[]>> = {};
+const engineering: Record<string, string[]> = {};
+for (const id of shipIds) {
+  const ship = stockShip(id);
+  const slots: Record<string, string[]> = {};
+  for (const ref of listSlots(ship)) {
+    const cands = slotCandidates(ship, ref, {});
+    slots[ref.key] = cands.map((m: any) => (ref.kind === 'bulkheads' ? `bh/${m.bulkheadIndex}` : `${m.grp}/${m.id}`));
+    for (const m of cands) {
+      if (ref.kind === 'bulkheads') continue;
+      engineering[`${m.grp}/${m.id}`] ??= engineeringOptions(m).map((e) => `${e.blueprint}:${e.grade}:${e.special ?? ''}`);
+    }
+  }
+  catalogShips[id] = slots;
+}
+
+// ---------------------------------------------------------------- arrange
+
+// Power priorities and internal slot tidying on random builds, with and without locked slots.
+const arrangeCases = builds.filter((b) => b.label !== 'stock').map((b) => {
+  const out: Record<string, { code: string; moved: boolean }> = {};
+  for (const [name, locked] of [['free', () => false], ['everyThirdLocked', (r: any) => r.kind === 'internal' && r.index % 3 === 0]] as const) {
+    const ship = load(b);
+    assignPriorities(ship);
+    const moved = tidyInternalSlots(ship, locked as (r: any) => boolean);
+    out[name] = { code: coriolisCode(ship), moved };
+  }
+  return { ship: b.ship, code: b.code, ...out };
+});
+
 // ---------------------------------------------------------------- write
 
 const write = (path: string, data: unknown) => {
@@ -214,5 +264,7 @@ const write = (path: string, data: unknown) => {
 write('crates/corai-opt/tests/fixtures/metrics.json', { contexts: CONTEXTS, metrics: metricDefs.map((d) => d.name), cases: metricCases });
 write('crates/corai-opt/tests/fixtures/legality.json', { cases: legalityCases });
 write('crates/corai-opt/tests/fixtures/summary.json', { cases: summaryCases });
+write('crates/corai-opt/tests/fixtures/catalog.json', { ships: catalogShips, engineering });
+write('crates/corai-opt/tests/fixtures/arrange.json', { cases: arrangeCases });
 write('crates/corai-engine/tests/fixtures/interchange.json', { cases: interchangeCases });
 process.stderr.write(`oracle-corai: ${metricCases.length} metric builds, ${legalityCases.length} legality, ${summaryCases.length} summaries, ${interchangeCases.length} interchange\n`);
