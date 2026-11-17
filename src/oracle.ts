@@ -33,6 +33,7 @@ function record(ship: Ship) {
     dryMass: ship.dryMass, unladenMass: ship.unladenMass, ladenMass: ship.ladenMass,
     fuelCapacity: ship.fuelCapacity, cargoCapacity: ship.cargoCapacity, passengerCapacity: ship.passengerCapacity,
     powerAvailable: ship.powerAvailable, powerRetracted: ship.powerRetracted, powerDeployed: ship.powerDeployed,
+    powerDraw: { retracted: ship.powerDraw.retracted, deployed: ship.powerDraw.deployed },
     topSpeed: ship.topSpeed, topBoost: ship.topBoost, topPitch: ship.topPitch, topRoll: ship.topRoll, topYaw: ship.topYaw,
     shield: ship.shield, shieldCells: ship.shieldCells, armour: ship.armour,
     totalDps: ship.totalDps, totalSDps: ship.totalSDps, totalEps: ship.totalEps, totalHps: ship.totalHps,

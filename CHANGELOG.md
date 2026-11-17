@@ -10,6 +10,11 @@
   data; Type-7 and Type-8 journal slot names; limpet controller blueprints under the game's names
   (old builds still open). Coriolis' own jump ranges no longer count fuel twice; ED Corai's
   already did not, so its figures are unchanged.
+* **Heat, as coriolis.io shows it.** New metrics for the heat level at idle, at full thrust,
+  while the FSD charges, with all weapons firing (capacitor full or nearly empty) and while shield
+  cells spin up, and the time until the ship overheats while firing (`heatFiring`,
+  `timeToOverheatFiring`, ...). They use Coriolis' new heat model and each hull's heat capacity and
+  dissipation, so "keep it below overheating" can now be a constraint.
 * **Fix: exported builds name engineered values the way the game does.** An FSD's optimal mass was
   labelled as thruster optimal mass (and FSD heat as thruster heat, sensor range as scanner
   range), so EDSY or Spansh could misread an engineered FSD's jump range.

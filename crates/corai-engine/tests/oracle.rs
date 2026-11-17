@@ -190,6 +190,7 @@ fn actual(ship: &Ship, opponent: &Ship) -> Value {
         "dryMass": s.dry_mass, "unladenMass": s.unladen_mass, "ladenMass": s.laden_mass,
         "fuelCapacity": s.fuel_capacity, "cargoCapacity": s.cargo_capacity, "passengerCapacity": s.passenger_capacity,
         "powerAvailable": s.power_available, "powerRetracted": s.power_retracted, "powerDeployed": s.power_deployed,
+        "powerDraw": { "retracted": s.power_draw[0], "deployed": s.power_draw[1] },
         "topSpeed": s.top_speed, "topBoost": s.top_boost, "topPitch": s.top_pitch, "topRoll": s.top_roll, "topYaw": s.top_yaw,
         "shield": s.shield, "shieldCells": s.shield_cells, "armour": s.armour,
         "totalDps": s.total_dps, "totalSDps": s.total_sdps, "totalEps": s.total_eps, "totalHps": s.total_hps,

@@ -94,6 +94,9 @@ pub struct ShipProperties {
     pub base_shield_strength: f64,
     pub base_armour: f64,
     pub heat_capacity: f64,
+    /// Maximum heat dissipation (Coriolis 4.1.18); `None` where Coriolis has no figure.
+    #[serde(default)]
+    pub heat_dissipation: Option<f64>,
     pub hardness: f64,
     pub hull_mass: f64,
     pub masslock: f64,

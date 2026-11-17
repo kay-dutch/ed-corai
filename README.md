@@ -71,8 +71,10 @@ Offence: sustained and burst DPS, DPS against a reference target's shields and h
 efficiency against its hardness, time to kill it, weapon capacitor sustain, ammo endurance, weapon
 heat, number of weapon types and mount types (for consistent, aimable loadouts).
 
-Heat: net heat per second in a fight (power plant plus weapons, minus what Thermal Vent beams
-remove while on target) and the vent strength at which the ship would hold steady.
+Heat: the heat levels coriolis.io shows (idle, full thrust, FSD charging, all weapons firing with
+the capacitor full or nearly empty, shield cells spinning up) and the time until the ship
+overheats while firing, from the hull's heat capacity and dissipation; plus net heat per second in
+a fight with Thermal Vent beams and the vent strength at which the ship would hold steady.
 
 Plus `count:<group>` / `class:<group>` for "must have" modules.
 
@@ -106,8 +108,11 @@ assumption is a setting you can change.
   scoop, refinery, interdictor, scanner of each kind, and so on; at most four experimental
   (AX/Guardian) weapons; restricted slots (military, cargo, limpets, mining hardpoints) and
   ship-specific modules are honoured.
-- **Not modelled yet**: heat capacity and time to overheat (net heat per second is), sensor range, module
-  breach chance, NPC behaviour. The default `pve` damage mix (30 % kinetic, 60 % thermal,
+- **Heat** follows Coriolis' model (from Frontier forum research): heat settles at
+  √(load ÷ dissipation) up to the hull's maximum dissipation, then climbs until the ship overheats;
+  weapons heat up to five times more as the capacitor runs dry. The Anaconda Mk II borrows the old
+  Anaconda's dissipation until Coriolis has its own; the Type-7 has no heat figures yet.
+- **Not modelled yet**: sensor range, module breach chance, NPC behaviour. The default `pve` damage mix (30 % kinetic, 60 % thermal,
   5 % explosive, 5 % absolute) is an assumption, not a measurement.
 
 Every default that rests on an assumption is listed by `list_metrics` so you can rerun with the

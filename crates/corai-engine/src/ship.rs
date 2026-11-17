@@ -74,6 +74,9 @@ pub struct Stats {
     pub power_available: f64,
     pub power_retracted: f64,
     pub power_deployed: f64,
+    /// Coriolis' `powerDraw` (4.1.18): what the plant actually supplies, priority group by group
+    /// while the running total stays below its output (retracted, deployed).
+    pub power_draw: [f64; 2],
     pub bands: [PowerBand; 5],
     /// Hull + modules, no fuel or cargo.
     pub dry_mass: f64,
@@ -412,14 +415,31 @@ impl Ship {
             }
         }
         let (mut retracted, mut deployed) = (0.0, 0.0);
+        let available = self.stats.power_available;
+        let (mut draw_retracted, mut draw_deployed) = (0.0, 0.0);
+        let (mut retracted_exceeded, mut deployed_exceeded) = (false, false);
         for band in &mut bands {
             retracted += band.retracted;
             deployed += band.deployed + band.retracted;
             band.retracted_sum = retracted;
             band.deployed_sum = deployed;
+            // Coriolis keeps "<" (EDSY used "<="), and stops at the first group that does not fit.
+            let next = draw_retracted + band.retracted;
+            if !retracted_exceeded && next < available {
+                draw_retracted = next;
+            } else {
+                retracted_exceeded = true;
+            }
+            let next = draw_deployed + band.retracted + band.deployed;
+            if !deployed_exceeded && next < available {
+                draw_deployed = next;
+            } else {
+                deployed_exceeded = true;
+            }
         }
         self.stats.power_retracted = retracted;
         self.stats.power_deployed = deployed;
+        self.stats.power_draw = [draw_retracted, draw_deployed];
         self.stats.bands = bands;
     }
 

@@ -2,6 +2,7 @@
 
 pub mod arrange;
 pub mod catalog;
+pub mod heat;
 pub mod metrics;
 pub mod search;
 pub mod validate;

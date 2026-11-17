@@ -102,6 +102,8 @@ fn main() {
         modifications.insert(e.key, take(read_json(&mods_dir, &e.path), &e.prop));
     }
 
+    assume_anaconda_mk2_heat(&mut ships);
+
     let mut doc = Map::new();
     doc.insert("ships".into(), Value::Object(ships));
     doc.insert("modules".into(), Value::Object(modules));
@@ -116,4 +118,23 @@ fn main() {
         serde_json::to_string(&Value::Object(doc)).expect("serialisable"),
     )
     .unwrap_or_else(|e| panic!("writing {}: {e}", out.display()));
+}
+
+/// Coriolis has no heat dissipation figure for the Anaconda Mk II yet; until it does, ED Corai
+/// assumes the old Anaconda's (the project's rule for unknown Mk II values). The Node stub
+/// (`engine/stubs/coriolis-data.js`) applies the same assumption.
+fn assume_anaconda_mk2_heat(ships: &mut Map<String, Value>) {
+    let fallback = ships
+        .get("anaconda")
+        .and_then(|s| s["properties"]["heatDissipation"].as_f64());
+    if let (Some(v), Some(props)) = (
+        fallback,
+        ships
+            .get_mut("anaconda2")
+            .and_then(|s| s.get_mut("properties"))
+            .and_then(Value::as_object_mut),
+    ) && props.get("heatDissipation").is_none_or(Value::is_null)
+    {
+        props.insert("heatDissipation".into(), v.into());
+    }
 }

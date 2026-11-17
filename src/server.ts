@@ -223,8 +223,8 @@ server.registerTool('list_metrics', {
 }, wrap(() => ({
   metrics: METRICS.map((m) => ({ name: m.name, unit: m.unit, better: m.better, description: m.description })),
   parametrised: ['count:<group> = number of fitted modules of a group', 'class:<group> = sum of classes of fitted modules of a group'],
-  context: 'Effective-HP metrics use context.damage/damagePreset and sysPips; shieldTimeUnderFire uses incomingDps and regenUnderFire; dpsVs*, pierceEfficiency and timeToKill use context.opponent and rangeMeters; weaponSustain uses wepPips; jump ranges use reserveFuelInJumpMass.',
-  assumptions: 'Defaults that no published measurement settles: the pve damage mix, regenUnderFire=0, thermalVentFactor=1, the Corrosive Shell 1.25 hull multiplier and +20 piercing (community figures), reserve fuel excluded from jump mass, Coriolis hull-resistance stacking. Rerun with the alternative when a ranking is close.',
+  context: 'Effective-HP metrics use context.damage/damagePreset and sysPips; shieldTimeUnderFire uses incomingDps and regenUnderFire; dpsVs*, pierceEfficiency and timeToKill use context.opponent and rangeMeters; weaponSustain and the heat metrics use wepPips; jump ranges use reserveFuelInJumpMass.',
+  assumptions: 'Defaults that no published measurement settles: the pve damage mix, regenUnderFire=0, thermalVentFactor=1, the Corrosive Shell 1.25 hull multiplier and +20 piercing (community figures), reserve fuel excluded from jump mass, Coriolis hull-resistance stacking, the heat dissipation of the old Anaconda for the Anaconda Mk II (Coriolis has none yet; heat metrics are undefined for the Type-7, as on coriolis.io). Rerun with the alternative when a ranking is close.',
 })));
 
 const changeSchema = z.object({

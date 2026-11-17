@@ -16,6 +16,7 @@ use corai_engine::module::Resolved;
 use corai_engine::{Module, Ship, SlotKind};
 
 use crate::arrange::combat_deployed_draw;
+use crate::heat;
 
 /// Stand-in for "never" / "infinite" so that comparisons stay numeric.
 pub const UNBOUNDED: f64 = 1e6;
@@ -1239,6 +1240,62 @@ static METRICS: &[MetricDef] = &[
         |s, _| distinct(weapons(s).map(|m| m.def.mount.as_deref().unwrap_or("-")))
     ),
     metric!(
+        "heatIdle",
+        "%",
+        Lower,
+        Groups::None,
+        "Heat level at rest with hardpoints retracted, as coriolis.io shows it (100 = overheating).",
+        |s, c| heat::percent(s, heat::heat_rows(s, c.wep).idle)
+    ),
+    metric!(
+        "heatThrust",
+        "%",
+        Lower,
+        Groups::None,
+        "Heat level at full thrust, hardpoints retracted (coriolis.io).",
+        |s, c| heat::percent(s, heat::heat_rows(s, c.wep).thrust)
+    ),
+    metric!(
+        "heatFsdCharge",
+        "%",
+        Lower,
+        Groups::None,
+        "Heat level at full thrust while the FSD charges (coriolis.io).",
+        |s, c| heat::percent(s, heat::heat_rows(s, c.wep).fsd_charge)
+    ),
+    metric!(
+        "heatFiring",
+        "%",
+        Lower,
+        Groups::None,
+        "Heat level with all weapons firing in a sustained fight (WEP capacitor near empty, context WEP pips), hardpoints deployed, full thrust (coriolis.io; 100 = overheats, see timeToOverheatFiring).",
+        |s, c| heat::percent(s, heat::heat_rows(s, c.wep).firing)
+    ),
+    metric!(
+        "heatFiringFullCapacitor",
+        "%",
+        Lower,
+        Groups::None,
+        "Heat level with all weapons firing while the WEP capacitor is still full (coriolis.io).",
+        |s, c| heat::percent(s, heat::heat_rows(s, c.wep).firing_full)
+    ),
+    metric!(
+        "heatShieldCells",
+        "%",
+        Lower,
+        Groups::None,
+        "Heat level reached while shield cell banks spin up, hardpoints deployed, full thrust (coriolis.io).",
+        |s, c| heat::percent(s, heat::heat_rows(s, c.wep).shield_cells)
+    ),
+    metric!(
+        "timeToOverheatFiring",
+        "s",
+        Higher,
+        Groups::None,
+        "Seconds of sustained fire (as heatFiring) until the ship overheats, as coriolis.io shows it; 1e6 = never.",
+        |s, c| heat::time_to_overheat(heat::heat_rows(s, c.wep).firing, UNBOUNDED)
+    ),
+    metric!(
         "weaponHeat",
         "heat/s",
         Lower,
@@ -1325,14 +1382,25 @@ mod tests {
 
     #[test]
     fn every_catalog_metric_is_finite_on_every_stock_ship() {
+        // Except the heat metrics of a hull Coriolis has no heat data for (coriolis.io shows "-").
         let ctx = MetricContext::default();
-        for id in DATA.ships.keys() {
+        let heat = |name: &str| name.starts_with("heat") || name == "timeToOverheatFiring";
+        for (id, def) in &DATA.ships {
             let ship = Ship::stock(id).expect("ship");
+            let has_heat_data = def.properties.heat_dissipation.is_some_and(|d| d > 0.0);
             for m in Metric::catalog() {
                 let v = m.compute(&ship, &ctx);
-                assert!(v.is_finite(), "{id} {}: {v}", m.name());
+                if heat(&m.name()) && !has_heat_data {
+                    assert!(v.is_nan(), "{id} {}: {v} without heat data", m.name());
+                } else {
+                    assert!(v.is_finite(), "{id} {}: {v}", m.name());
+                }
             }
         }
+        // The Anaconda Mk II borrows the old Anaconda's dissipation until Coriolis has its own.
+        let mk2 = &DATA.ships["anaconda2"].properties;
+        let old = &DATA.ships["anaconda"].properties;
+        assert!(mk2.heat_dissipation.is_some() && mk2.heat_dissipation == old.heat_dissipation);
     }
 
     #[test]

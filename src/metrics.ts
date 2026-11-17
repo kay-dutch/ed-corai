@@ -92,6 +92,58 @@ function shieldMults(ship: Ship, ctx: MetricContext) {
 }
 
 /**
+ * Coriolis' heat model (4.1.18, the heat rows of coriolis.io's ship summary), computed by Coriolis'
+ * own functions: equilibrium heat sqrt(load / dissipation) up to the hull's maximum dissipation,
+ * then a linear climb to overheating (displayed 100 %). Loads as coriolis.io adds them: modules
+ * through the power plant's efficiency, thrusters at full thrust, the FSD charging, weapons at the
+ * context WEP pips (capacitor full or near empty), shield cells spinning up.
+ */
+function heatRows(ship: Ship, ctx: MetricContext) {
+  const t = (key: string) => key;
+  const pp = ship.getPowerPlantThermalEfficiency();
+  const retracted = ship.powerDraw.retracted * pp;
+  const deployed = ship.powerDraw.deployed * pp;
+  const thrusters = ship.standard[1].m?.get('thermload') || 0;
+  const fsd = ship.standard[2].m?.get('thermload') || 0;
+  // coriolis.io hides the weapon rows on an unarmed ship (where its formula divides 0 by 0 at
+  // 0 WEP pips); unarmed means no weapon heat.
+  // Weapons that draw no capacitor energy (mines, missiles) fire at full rate: Coriolis' formula
+  // gets that at any WEP pips but 0, where it divides 0 by 0.
+  const wep = ship.getSustainedHardpointEnergyDrawPerSecond() === 0 ? 4 : ctx.wep;
+  const weapons = ship.hasHardpointMounted() ? ship.getWeaponsThermalLoad(wep) : { weaponCapacitorFull: 0, weaponCapacitorEmpty: 0 };
+  const row = (load: number, base: number, duration?: number) => ({ row: ship.getHeatLevel(t, load, base, duration) as HeatRow, base });
+  return {
+    idle: row(retracted, 0),
+    thrust: row(thrusters, retracted),
+    fsdCharge: row(fsd, retracted + thrusters),
+    firingFull: row(weapons.weaponCapacitorFull, deployed + thrusters),
+    firing: row(weapons.weaponCapacitorEmpty, deployed + thrusters),
+    shieldCells: row(ship.getScbsThermalLoad(), deployed + thrusters, ship.getScbsMaxSpinupTime()),
+  };
+}
+
+type HeatRow = { type: string; result: number | string };
+type HeatEntry = { row: HeatRow; base: number };
+
+/**
+ * A heat row as a displayed percentage: the level reached (100 = the ship overheats). Without an
+ * extra load (no weapons, no shield cells: coriolis.io shows N/A) the level of the base load alone.
+ */
+function heatPercent(ship: Ship, { row, base }: HeatEntry): number {
+  if (!ship.heatDissipation) return NaN;
+  if (row.type === 'percentage') return (row.result as number) * 100;
+  if (row.result === 'N/A') return (ship.getEquilibriumHeatLevel(ship.heatDissipation, base) / 1.5) * 100;
+  return 100; // time until overheating, or ∞ (the base load alone overheats)
+}
+
+/** Seconds until a heat row overheats; CAP when it never does. */
+function heatTime(ship: Ship, { row }: HeatEntry): number {
+  if (!ship.heatDissipation) return NaN;
+  if (row.type === 'time') return row.result as number;
+  return row.result === '∞' ? 0 : CAP;
+}
+
+/**
  * Shield regeneration the distributor can keep up indefinitely at the context SYS pips: each MJ
  * regenerated costs the generator's distributor draw from the SYS capacitor (Coriolis' model).
  */
@@ -373,6 +425,13 @@ export const METRICS: MetricDef[] = [
   { name: 'thermalVentBreakEven', unit: 'x', better: 'lower', groups: [], description: 'Thermal Vent strength (multiple of the vent beams\' own thermal load) needed to cancel all other heat in a fight. If your ship reaches 0 heat with vents on target, the real factor is at least this. 1e6 = no vent beams.', compute: (s, c) => heatBudget(s, c).breakEvenFactor },
   { name: 'weaponTypes', unit: 'types', better: 'lower', groups: [], description: 'Number of distinct weapon types fitted (e.g. plasma accelerators + multi-cannons = 2). Cap it to keep a loadout with matching ballistics that is easy to aim and manage.', compute: (s) => new Set(weapons(s).map((m) => m.grp)).size },
   { name: 'mountTypes', unit: 'types', better: 'lower', groups: [], description: 'Number of distinct mount types among weapons (fixed, gimballed, turreted). 1 = all weapons share one mount type.', compute: (s) => new Set(weapons(s).map((m) => m.mount)).size },
+  { name: 'heatIdle', unit: '%', better: 'lower', groups: [], description: 'Heat level at rest with hardpoints retracted, as coriolis.io shows it (100 = overheating).', compute: (s, c) => heatPercent(s, heatRows(s, c).idle) },
+  { name: 'heatThrust', unit: '%', better: 'lower', groups: [], description: 'Heat level at full thrust, hardpoints retracted (coriolis.io).', compute: (s, c) => heatPercent(s, heatRows(s, c).thrust) },
+  { name: 'heatFsdCharge', unit: '%', better: 'lower', groups: [], description: 'Heat level at full thrust while the FSD charges (coriolis.io).', compute: (s, c) => heatPercent(s, heatRows(s, c).fsdCharge) },
+  { name: 'heatFiring', unit: '%', better: 'lower', groups: [], description: 'Heat level with all weapons firing in a sustained fight (WEP capacitor near empty, context WEP pips), hardpoints deployed, full thrust (coriolis.io; 100 = overheats, see timeToOverheatFiring).', compute: (s, c) => heatPercent(s, heatRows(s, c).firing) },
+  { name: 'heatFiringFullCapacitor', unit: '%', better: 'lower', groups: [], description: 'Heat level with all weapons firing while the WEP capacitor is still full (coriolis.io).', compute: (s, c) => heatPercent(s, heatRows(s, c).firingFull) },
+  { name: 'heatShieldCells', unit: '%', better: 'lower', groups: [], description: 'Heat level reached while shield cell banks spin up, hardpoints deployed, full thrust (coriolis.io).', compute: (s, c) => heatPercent(s, heatRows(s, c).shieldCells) },
+  { name: 'timeToOverheatFiring', unit: 's', better: 'higher', groups: [], description: 'Seconds of sustained fire (as heatFiring) until the ship overheats, as coriolis.io shows it; 1e6 = never.', compute: (s, c) => heatTime(s, heatRows(s, c).firing) },
   { name: 'weaponHeat', unit: 'heat/s', better: 'lower', groups: [], description: 'Heat generated per second by all weapons firing (Coriolis thermal load). Cap it at a proven build\'s value to avoid overheating loadouts.', compute: (s) => s.totalHps },
   { name: 'ammoEndurance', unit: 's', better: 'higher', groups: [], description: 'Seconds of continuous fire until the first ammunition-limited weapon runs completely dry (magazine + reserve; 1e6 = no ammo-limited weapons). Pair with DPS goals so finite ordnance is not mistaken for sustained damage.', compute: (s) => ammoEndurance(s) },
   { name: 'axSustainedDps', unit: 'dps', better: 'higher', groups: EXPERIMENTAL_WEAPONS, description: 'Raw sustained DPS from AX/Guardian (experimental) weapons only — the damage that counts against Thargoid interceptors.', compute: (s) => experimentalSdps(s) },
