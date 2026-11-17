@@ -460,7 +460,7 @@ dependencies = [
 
 [[package]]
 name = "corai-activity"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -468,7 +468,7 @@ dependencies = [
 
 [[package]]
 name = "corai-data"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "indexmap",
  "serde",
@@ -477,7 +477,7 @@ dependencies = [
 
 [[package]]
 name = "corai-engine"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64",
  "corai-data",
@@ -491,14 +491,14 @@ dependencies = [
 
 [[package]]
 name = "corai-journal"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "corai-mcp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "corai-activity",
  "corai-journal",
@@ -512,7 +512,7 @@ dependencies = [
 
 [[package]]
 name = "corai-opt"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "corai-data",
  "corai-engine",
@@ -523,7 +523,7 @@ dependencies = [
 
 [[package]]
 name = "corai-service"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "corai-data",
  "corai-engine",
@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "corai-update"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde_json",
  "sha2",
@@ -769,7 +769,7 @@ dependencies = [
 
 [[package]]
 name = "ed-corai"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "corai-activity",
  "corai-data",
@@ -784,7 +784,7 @@ dependencies = [
 
 [[package]]
 name = "ed-corai-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "corai-mcp",
