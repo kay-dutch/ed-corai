@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.4.0 — in step with coriolis.io
+
+* **Same Coriolis as coriolis.io.** ED Corai now follows the code and data coriolis.io is deployed
+  from (Brighter-Applications' `live` branches, Coriolis 4.1.21), not the EDCD repositories, which
+  stopped receiving these updates. The weekly update and `check_for_updates` report the version
+  coriolis.io runs.
+* New from Coriolis: corrected FSD, passenger cabin, rail gun, Guardian weapon and mining module
+  data; Type-7 and Type-8 journal slot names; limpet controller blueprints under the game's names
+  (old builds still open). Coriolis' own jump ranges no longer count fuel twice; ED Corai's
+  already did not, so its figures are unchanged.
+* **Fix: exported builds name engineered values the way the game does.** An FSD's optimal mass was
+  labelled as thruster optimal mass (and FSD heat as thruster heat, sensor range as scanner
+  range), so EDSY or Spansh could misread an engineered FSD's jump range.
+
 ## v0.3.0 — desktop window and your ships
 
 * **Desktop window.** `ed-corai` shows what ED Corai is doing: a Coriolis station that turns while

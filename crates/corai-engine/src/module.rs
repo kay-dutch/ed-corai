@@ -180,8 +180,27 @@ pub enum Curve {
     Rotation = 2,
 }
 
+/// Coriolis' former limpet controller blueprint names (`CollectionLimpet_LightWeight`, ...), now
+/// the game's `Misc_LightWeight` etc. with identical effects (Coriolis 4.1.20, EDCD/coriolis#913).
+fn legacy_limpet_blueprint(name: &str) -> Option<String> {
+    let (family, kind) = name.split_once('_')?;
+    let family_known = [
+        "ProspectingLimpet",
+        "CollectionLimpet",
+        "FuelTransferLimpet",
+        "HatchBreakerLimpet",
+    ]
+    .iter()
+    .any(|f| f.eq_ignore_ascii_case(family));
+    let kind = ["LightWeight", "Reinforced", "Shielded"]
+        .into_iter()
+        .find(|k| k.eq_ignore_ascii_case(kind))?;
+    family_known.then(|| format!("Misc_{kind}"))
+}
+
 /// Finds a blueprint the way Coriolis' `getBlueprint` does: the first key containing the name,
-/// case-insensitively, with the multi-cannon "Overcharged" special case.
+/// case-insensitively, with the multi-cannon "Overcharged" special case and the former limpet
+/// controller names.
 pub fn find_blueprint(
     name: &str,
     module: &ModuleDef,
@@ -190,9 +209,11 @@ pub fn find_blueprint(
         .symbol
         .as_deref()
         .is_some_and(|s| s.to_ascii_lowercase().contains("multicannon"));
+    let legacy = legacy_limpet_blueprint(name);
     let name = match name {
         "weapon_overcharged" if is_mc => "mc_overcharged",
         "Weapon_Overcharged" if is_mc => "MC_Overcharged",
+        _ if legacy.is_some() => legacy.as_deref().unwrap_or(name),
         other => other,
     };
     let needle = name
@@ -907,6 +928,21 @@ mod tests {
                 .find(|m| m.id == id)
                 .expect("module exists"),
         )
+    }
+
+    #[test]
+    fn former_limpet_blueprint_names_still_resolve() {
+        let cc = DATA.modules.internal["cc"]
+            .first()
+            .expect("a collector controller");
+        for (old, new) in [
+            ("CollectionLimpet_LightWeight", "Misc_LightWeight"),
+            ("prospectinglimpet_reinforced", "Misc_Reinforced"),
+            ("HatchBreakerLimpet_Shielded", "Misc_Shielded"),
+        ] {
+            assert_eq!(find_blueprint(old, cc).map(|(k, _)| k), Some(new), "{old}");
+        }
+        assert_eq!(legacy_limpet_blueprint("Armour_HeavyDuty"), None);
     }
 
     #[test]

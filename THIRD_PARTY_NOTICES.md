@@ -5,8 +5,9 @@ crates) also contain the following third-party material.
 
 ## Coriolis calculation engine
 
-`upstream/coriolis` (https://github.com/EDCD/coriolis) is bundled into `dist/server.cjs` and
-`dist/cli.cjs`. Its code is used under the MIT License:
+`upstream/coriolis` (https://github.com/Brighter-Applications/coriolis, the code coriolis.io runs;
+originally https://github.com/EDCD/coriolis) is bundled into `dist/server.cjs` and `dist/cli.cjs`,
+and ported to the Rust crates. Its code is used under the MIT License:
 
 ```
 Copyright (c) 2015 Coriolis.io, Colin McLeod
@@ -32,7 +33,8 @@ THE SOFTWARE.
 
 ## Elite Dangerous game data
 
-`upstream/coriolis-data` (https://github.com/EDCD/coriolis-data) supplies ship and module data,
+`upstream/coriolis-data` (https://github.com/Brighter-Applications/coriolis-data, originally
+https://github.com/EDCD/coriolis-data) supplies ship and module data,
 which is embedded in `dist/` and in the `corai-data` crate. The data is intellectual property and
 copyright of Frontier Developments plc and is subject to Frontier's terms and conditions
 (https://www.frontierstore.net/terms-and-conditions/). It is not covered by ED Corai's MIT License.

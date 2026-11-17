@@ -91,7 +91,7 @@ assumption is a setting you can change.
   penetration is below the target's hardness; this is why piercing efficiency and time to kill are
   reported against a reference opponent.
 - **Jump range** counts fuel once and excludes the reserve tank by default, matching the journal's
-  `MaxJumpRange` (Coriolis counts fuel twice; `reserveFuelInJumpMass` restores its behaviour).
+  `MaxJumpRange` (Coriolis counts the reserve tank; `reserveFuelInJumpMass` restores its behaviour).
 - **Shields under fire**: regeneration is assumed to pause while taking hits (`regenUnderFire`
   = 0). The real pause is unmeasured; set 0–1 to explore.
 - **Corrosive Shell** raises all hull damage to a target it keeps hitting by 25 % (once, however

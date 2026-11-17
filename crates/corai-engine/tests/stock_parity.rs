@@ -1,4 +1,4 @@
-//! Stock-build values captured from the upstream Coriolis engine (see git history of the TS oracle).
+//! Stock-build values captured from the upstream Coriolis engine (4.1.21, coriolis.io).
 
 use corai_engine::Ship;
 
@@ -16,8 +16,8 @@ fn stock_python_matches_coriolis() {
         ("ladenMass", s.laden_mass, 778.0),
         ("cargoCapacity", s.cargo_capacity, 82.0),
         ("fuelCapacity", s.fuel_capacity, 32.0),
-        ("unladenRange", unladen, 8.205012361270894),
-        ("fullTankRange", full_tank, 7.881913895553958),
+        ("unladenRange", unladen, 8.597990367887375),
+        ("fullTankRange", full_tank, 8.243869099345021),
         ("ladenRange", laden, 7.375903989954921),
         ("topSpeed", s.top_speed, 234.22008165685364),
         ("topBoost", s.top_boost, 305.5044543350265),

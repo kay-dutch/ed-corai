@@ -531,25 +531,18 @@ impl Ship {
                 .sum::<f64>()
     }
 
-    /// Coriolis' own jump figures (which count fuel twice; see `corai` metrics for corrected ones).
+    /// Coriolis' own jump figures: unladen (dry mass plus one jump's fuel), full tank, laden.
+    /// Since Coriolis 4.1.19 fuel is no longer counted twice; corai's metrics add the reserve-tank
+    /// choice on top.
     pub fn coriolis_jump_stats(&self) -> (f64, f64, f64) {
         let Some(fsd) = self.fsd() else {
             return (0.0, 0.0, 0.0);
         };
         let s = &self.stats;
         let max_fuel = num(fsd.r().maxfuel);
-        let unladen = calc::jump_range(
-            self,
-            s.unladen_mass + max_fuel.min(s.fuel_capacity),
-            fsd,
-            None,
-        );
-        let full_tank = calc::jump_range(
-            self,
-            s.unladen_mass + s.fuel_capacity,
-            fsd,
-            Some(s.fuel_capacity),
-        );
+        let unladen = calc::jump_range(self, s.dry_mass + max_fuel.min(s.fuel_capacity), fsd, None);
+        // `unladen_mass` already holds a full tank.
+        let full_tank = calc::jump_range(self, s.unladen_mass, fsd, Some(s.fuel_capacity));
         let laden = calc::jump_range(self, s.laden_mass, fsd, None);
         (unladen, full_tank, laden)
     }

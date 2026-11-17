@@ -1,5 +1,7 @@
-// Pulls the newest Coriolis code and data (the branch set in .gitmodules), rebuilds, runs the
-// tests and reports which ships and modules changed. Failing tests roll the update back.
+// Pulls the newest Coriolis code and data (the branch set in .gitmodules: the `live` branches of
+// Brighter-Applications' forks, which coriolis.io is deployed from), rebuilds, runs the tests and
+// reports which ships and modules changed and whether coriolis.io runs the same version. Failing
+// tests roll the update back.
 //
 //   node scripts/update-upstream.mjs            update, test, report
 //   node scripts/update-upstream.mjs --check    only report what is new upstream
@@ -69,17 +71,26 @@ function diff(before, after) {
   return { ships: changes(before.ships, after.ships), modules: changes(before.modules, after.modules) };
 }
 
-// ---------- EDSY watch ----------
-
-async function edsyCommitsSince(iso) {
+/** Commits of a GitHub repository since a date (first lines), or an error. */
+async function commitsSince(repo, iso) {
   try {
     const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'ed-corai-upstream-check' };
     if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-    const res = await fetch(`https://api.github.com/repos/taleden/EDSY/commits?since=${encodeURIComponent(iso)}&per_page=20`, { headers, signal: AbortSignal.timeout(10_000) });
+    const res = await fetch(`https://api.github.com/repos/${repo}/commits?since=${encodeURIComponent(iso)}&per_page=20`, { headers, signal: AbortSignal.timeout(10_000) });
     if (!res.ok) return { error: `GitHub answered ${res.status}` };
     return { commits: (await res.json()).map((c) => ({ date: c.commit.committer.date.slice(0, 10), message: c.commit.message.split('\n')[0] })) };
   } catch (e) {
     return { error: e.message };
+  }
+}
+
+/** The version coriolis.io serves (`VERSION = '4.1.21'` in its page). */
+async function siteVersion() {
+  try {
+    const html = await (await fetch('https://coriolis.io/', { signal: AbortSignal.timeout(10_000) })).text();
+    return html.match(/VERSION = '([0-9][^'-]*)'/)?.[1];
+  } catch {
+    return undefined;
   }
 }
 
@@ -113,7 +124,9 @@ if (anyNew) {
 let failed = false;
 if (anyNew && !checkOnly) {
   const before = snapshot();
-  sh('git', ['submodule', 'update', '--remote', ...SUBMODULES]);
+  // The fetched commit itself: `submodule update --remote` needs a remote-tracking branch that
+  // single-branch clones do not have.
+  for (const dir of SUBMODULES) git(dir, 'checkout', '--quiet', upstreamHead[dir]);
   const d = diff(before, snapshot());
   say();
   say('## Data changes');
@@ -171,8 +184,25 @@ if (anyNew && !checkOnly) {
 }
 
 say();
+say('## coriolis.io');
+const site = await siteVersion();
+const ours = JSON.parse(readFileSync(path.join(root, 'upstream/coriolis/package.json'), 'utf8')).version;
+if (!site) say('- Could not read the version coriolis.io serves.');
+else if (site === ours) say(`- coriolis.io runs ${site}, the same version as ED Corai's Coriolis code.`);
+else say(`- coriolis.io runs ${site}; ED Corai's Coriolis code is ${ours}. Check which branch the site is deployed from.`);
+
+say();
+say('## EDCD (original repositories, watched)');
+for (const repo of ['EDCD/coriolis', 'EDCD/coriolis-data']) {
+  const r = await commitsSince(repo, dataDate);
+  if (r.error) say(`- ${repo}: could not read commits (${r.error})`);
+  else if (!r.commits.length) say(`- ${repo}: no commits since ${dataDate.slice(0, 10)}.`);
+  else for (const c of r.commits) say(`- ${repo} ${c.date} ${c.message}`);
+}
+
+say();
 say('## EDSY (watched, not imported)');
-const edsy = await edsyCommitsSince(dataDate);
+const edsy = await commitsSince('taleden/EDSY', dataDate);
 if (edsy.error) say(`- Could not read EDSY commits: ${edsy.error}`);
 else if (!edsy.commits.length) say(`- No EDSY commits since the Coriolis data (${dataDate.slice(0, 10)}).`);
 else {

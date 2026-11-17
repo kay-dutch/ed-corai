@@ -1286,7 +1286,7 @@ mod tests {
             Some(num(fsd.r().maxfuel).min(fuel)),
         );
         assert_eq!(metric("fullTankRange").compute(&ship, &ctx), expected);
-        // Coriolis' own figure counts the tank twice, so it is strictly shorter.
+        // Coriolis' own figure counts the reserve tank too, so it is shorter.
         let (_, coriolis_full_tank, _) = ship.coriolis_jump_stats();
         assert!(expected > coriolis_full_tank);
     }

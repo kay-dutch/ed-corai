@@ -5,7 +5,7 @@
 // game uses.
 import { gunzipSync, inflateSync, unzipSync, deflateSync } from 'node:zlib';
 import {
-  BlueprintFunctions, CompanionApiUtils, JournalUtils, Modifications, coriolisUrl, recalcAll, shipData, shipFromCoriolis, type Ship,
+  BlueprintFunctions, CompanionApiUtils, JournalUtils, Modifications, Modules, coriolisUrl, recalcAll, shipData, shipFromCoriolis, type Ship,
 } from './engine.js';
 
 import { BUILD } from './version.js';
@@ -54,6 +54,31 @@ function fdLabel(attr: string): string | undefined {
   return fdLabels.get(attr);
 }
 
+const SHIELD_GENERATORS = ['sg', 'bsg', 'psg'];
+const SCANNERS = ['cs', 'kw', 'ws', 'sc', 'ss', 'xs', 'pwa'];
+
+/**
+ * Attributes the game reports under different labels depending on the module (Coriolis 4.1.16's
+ * Serializer): an FSD's optimal mass is FSDOptimalMass, not EngineOptimalMass. A wrong label makes
+ * EDSY or Spansh misread the value (e.g. an engineered FSD's jump range).
+ */
+const AMBIGUOUS_LABELS: Record<string, (grp: string, isHardpoint: boolean) => string> = {
+  optmass: (grp) => (grp === 'fsd' ? 'FSDOptimalMass' : SHIELD_GENERATORS.includes(grp) ? 'ShieldGenOptimalMass' : 'EngineOptimalMass'),
+  optmul: (grp) => (SHIELD_GENERATORS.includes(grp) ? 'ShieldGenStrength' : 'EngineOptPerformance'),
+  thermload: (grp) => (grp === 't' ? 'EngineHeatRate' : grp === 'fsd' ? 'FSDHeatRate' : grp === 'scb' ? 'ShieldBankHeat' : 'ThermalLoad'),
+  distdraw: (grp) => (SHIELD_GENERATORS.includes(grp) ? 'EnergyPerRegen' : 'DistributorDraw'),
+  angle: (grp) => (grp === 's' ? 'SensorTargetScanAngle' : 'MaxAngle'),
+  range: (grp, isHardpoint) => (grp === 's' ? 'Range' : SCANNERS.includes(grp) ? 'ScannerRange' : isHardpoint ? 'MaximumRange' : 'Range'),
+  clip: () => 'AmmoClipSize',
+};
+
+/** The journal label of a module's attribute. */
+function fdLabelFor(attr: string, m: any): string | undefined {
+  const resolve = AMBIGUOUS_LABELS[attr];
+  if (resolve) return resolve(m?.grp, !!(m?.mount || (m?.grp && Modules.hardpoints?.[m.grp])));
+  return fdLabel(attr);
+}
+
 /**
  * The engineered values as the journal lists them: final value (experimental included) and the
  * unmodified value, per attribute. Importers that read Modifiers get the exact build back.
@@ -64,7 +89,7 @@ function modifiers(m: any): NonNullable<LoadoutModule['Engineering']>['Modifiers
   for (const attr of Object.keys(m.mods ?? {})) {
     const def = Modifications.modifications[attr];
     if (!def || def.hidden || def.type === 'object') continue;
-    const label = fdLabel(attr);
+    const label = fdLabelFor(attr, m);
     const value = m.get(attr, true);
     // Attributes without a base value (jitter on most weapons) start from 0, as in the journal.
     const base = typeof m[attr] === 'number' ? m[attr] : 0;

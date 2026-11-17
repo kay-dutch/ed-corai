@@ -967,6 +967,41 @@ fn fd_label(attr: &str) -> Option<String> {
         .map(|(k, _)| k.trim_start_matches("OutfittingFieldType_").to_string())
 }
 
+const SHIELD_GENERATORS: &[&str] = &["sg", "bsg", "psg"];
+const SCANNERS: &[&str] = &["cs", "kw", "ws", "sc", "ss", "xs", "pwa"];
+
+/// The journal label of a module's attribute. Some attributes are reported under different labels
+/// depending on the module (Coriolis 4.1.16's Serializer): an FSD's optimal mass is FSDOptimalMass,
+/// not EngineOptimalMass. A wrong label makes EDSY or Spansh misread the value.
+fn fd_label_for(attr: &str, m: &Module) -> Option<String> {
+    let grp = m.def.grp.as_str();
+    let shield = SHIELD_GENERATORS.contains(&grp);
+    let label = match attr {
+        "optmass" if grp == "fsd" => "FSDOptimalMass",
+        "optmass" if shield => "ShieldGenOptimalMass",
+        "optmass" => "EngineOptimalMass",
+        "optmul" if shield => "ShieldGenStrength",
+        "optmul" => "EngineOptPerformance",
+        "thermload" if grp == "t" => "EngineHeatRate",
+        "thermload" if grp == "fsd" => "FSDHeatRate",
+        "thermload" if grp == "scb" => "ShieldBankHeat",
+        "thermload" => "ThermalLoad",
+        "distdraw" if shield => "EnergyPerRegen",
+        "distdraw" => "DistributorDraw",
+        "angle" if grp == "s" => "SensorTargetScanAngle",
+        "angle" => "MaxAngle",
+        "range" if grp == "s" => "Range",
+        "range" if SCANNERS.contains(&grp) => "ScannerRange",
+        "range" if m.def.mount.is_some() || DATA.modules.hardpoints.contains_key(grp) => {
+            "MaximumRange"
+        }
+        "range" => "Range",
+        "clip" => "AmmoClipSize",
+        _ => return fd_label(attr),
+    };
+    Some(label.to_string())
+}
+
 fn round6(x: f64) -> f64 {
     js_round(x * 1e6) / 1e6
 }
@@ -990,7 +1025,7 @@ fn modifiers(m: &Module) -> Option<Value> {
             if def.hidden || def.kind == corai_data::ModificationKind::Object {
                 return None;
             }
-            let label = fd_label(attr)?;
+            let label = fd_label_for(attr, m)?;
             let value = m.get(attr).filter(|v| v.is_finite())?;
             let base = m.base(attr).filter(|v| !v.is_nan()).unwrap_or(0.0);
             Some(json!({

@@ -1,8 +1,8 @@
 [submodule "upstream/coriolis"]
 	path = upstream/coriolis
-	url = https://github.com/EDCD/coriolis.git
-	branch = develop
+	url = https://github.com/Brighter-Applications/coriolis.git
+	branch = live
 [submodule "upstream/coriolis-data"]
 	path = upstream/coriolis-data
-	url = https://github.com/EDCD/coriolis-data.git
-	branch = develop
+	url = https://github.com/Brighter-Applications/coriolis-data.git
+	branch = live
